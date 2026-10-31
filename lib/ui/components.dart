@@ -54,10 +54,14 @@ class LoadFailurePanel extends StatelessWidget {
     required this.message,
     required this.onRetry,
     required this.onHome,
+    this.onAccess,
+    this.title = 'Riprendiamo da qui',
   });
   final String message;
   final VoidCallback onRetry;
   final VoidCallback onHome;
+  final VoidCallback? onAccess;
+  final String title;
   @override
   Widget build(BuildContext context) => ColoredBox(
     color: Theme.of(context).scaffoldBackgroundColor,
@@ -73,10 +77,7 @@ class LoadFailurePanel extends StatelessWidget {
               color: Color(0xff285bd7),
             ),
             const SizedBox(height: 20),
-            Text(
-              'Riprendiamo da qui',
-              style: Theme.of(context).textTheme.headlineSmall,
-            ),
+            Text(title, style: Theme.of(context).textTheme.headlineSmall),
             const SizedBox(height: 12),
             Text(message, textAlign: TextAlign.center),
             const SizedBox(height: 24),
@@ -85,6 +86,11 @@ class LoadFailurePanel extends StatelessWidget {
               icon: const Icon(Icons.refresh_rounded),
               label: const Text('Riprova'),
             ),
+            if (onAccess != null)
+              TextButton(
+                onPressed: onAccess,
+                child: const Text('Accesso dalla home ufficiale'),
+              ),
             TextButton(
               onPressed: onHome,
               child: const Text('Vai alla pagina iniziale'),

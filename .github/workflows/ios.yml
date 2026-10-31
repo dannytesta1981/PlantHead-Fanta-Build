@@ -1,4 +1,4 @@
-name: iOS 1.1.1 build 3 — manual unsigned
+name: iOS 1.1.2 build 4 — manual unsigned
 on:
   workflow_dispatch:
 concurrency:
@@ -28,7 +28,7 @@ jobs:
       - run: npm ci && npm test
         working-directory: tool
       - name: Compile physical iOS device app without signing
-        run: flutter build ios --release --no-codesign --no-pub --build-name=1.1.1 --build-number=3
+        run: flutter build ios --release --no-codesign --no-pub --build-name=1.1.2 --build-number=4
       - name: Package actual app for external signing
         shell: bash
         run: |
@@ -43,16 +43,16 @@ jobs:
           mkdir -p build/feather/Payload
           cp -R build/ios/iphoneos/Runner.app build/feather/Payload/
           cd build/feather
-          /usr/bin/ditto -c -k --keepParent Payload PlantHead_Fanta-1.1.1-unsigned.ipa
-          unzip -t PlantHead_Fanta-1.1.1-unsigned.ipa
-          shasum -a 256 PlantHead_Fanta-1.1.1-unsigned.ipa > SHA256.txt
+          /usr/bin/ditto -c -k --keepParent Payload PlantHead_Fanta-1.1.2-unsigned.ipa
+          unzip -t PlantHead_Fanta-1.1.2-unsigned.ipa
+          shasum -a 256 PlantHead_Fanta-1.1.2-unsigned.ipa > SHA256.txt
       - name: Validate IPA contents
-        run: python3 tool/verify_ipa.py build/feather/PlantHead_Fanta-1.1.1-unsigned.ipa > build/feather/VERIFICATION.json
+        run: python3 tool/verify_ipa.py build/feather/PlantHead_Fanta-1.1.2-unsigned.ipa > build/feather/VERIFICATION.json
       - name: Real WKWebView regression on iPhone simulator
-        continue-on-error: true
         timeout-minutes: 18
         shell: bash
         run: |
+          set +e
           set -uo pipefail
           echo 'NOT_COMPLETED' > build/feather/WEBVIEW_RESULT.txt
           DEVICE=$(xcrun simctl list devices available -j | python3 -c 'import json,sys; d=json.load(sys.stdin); print(next(x["udid"] for group in d["devices"].values() for x in group if x["name"].startswith("iPhone")))')
@@ -73,7 +73,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: PlantHead-Fanta-1.1.1-build3-unsigned-Feather
+          name: PlantHead-Fanta-1.1.2-build4-unsigned-Feather
           retention-days: 3
           path: |
             build/feather/*.ipa

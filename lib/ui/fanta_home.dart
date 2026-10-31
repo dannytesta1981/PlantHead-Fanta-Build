@@ -14,6 +14,7 @@ import '../core/navigation_policy.dart';
 import 'components.dart';
 import '../data/fanta_store.dart';
 import '../data/diagnostics.dart';
+import '../data/navigation_trace.dart';
 
 class OfficialWebPage extends StatefulWidget {
   const OfficialWebPage({
@@ -38,6 +39,9 @@ class OfficialWebPageState extends State<OfficialWebPage>
   final _downloads = DownloadService();
   Timer? _scanTimer;
   final _load = WebLoadMonitor();
+  late final NavigationTrace _trace;
+  int? _httpStatus;
+  bool _accessAfterHome = false;
   bool _loadStopped = false;
   bool _probing = false;
   String? _script;
@@ -59,6 +63,9 @@ class OfficialWebPageState extends State<OfficialWebPage>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    _trace = NavigationTrace(widget.store.diagnostics);
+    _trace.command('app_initial_home', destination: NavigationPolicy.home);
+    widget.store.onWebCommand = () => _trace.command('app_control');
     _load.onTimeout = () {
       widget.store.diagnostics.record(
         'web_timeout',
@@ -114,6 +121,7 @@ class OfficialWebPageState extends State<OfficialWebPage>
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _scanTimer?.cancel();
+    widget.store.onWebCommand = null;
     _load.removeListener(_loadChanged);
     _load.dispose();
     if (identical(widget.store.controller, _web)) {
@@ -145,7 +153,10 @@ class OfficialWebPageState extends State<OfficialWebPage>
           'Caricamento non completato entro 35 secondi. Controlla la rete e premi Riprova.',
         'webkit' =>
           'Il contenuto web è stato interrotto da iOS. Premi Riprova per ricrearlo.',
-        'http' => 'Il sito ha restituito un errore. Attendi e premi Riprova.',
+        'http' =>
+          _httpStatus == 404
+              ? 'Il sito ha restituito HTTP 404 per la pagina principale. Puoi tornare alla home ufficiale e usare il suo modulo di accesso. Riprova riapre la home.'
+              : 'Il sito ha restituito HTTP ${_httpStatus ?? 0}. Torna alla home ufficiale o riprova.',
         _ =>
           'Impossibile caricare il sito ufficiale. Controlla la connessione e premi Riprova.',
       };
@@ -176,6 +187,10 @@ class OfficialWebPageState extends State<OfficialWebPage>
         widget.store.pageFinished();
         await _refresh?.endRefreshing();
         await _scan();
+        if (_accessAfterHome) {
+          _accessAfterHome = false;
+          unawaited(_openAccess());
+        }
       }
     } catch (_) {
       widget.store.diagnostics.record('web_probe_error');
@@ -200,24 +215,105 @@ class OfficialWebPageState extends State<OfficialWebPage>
     }
   }
 
-  Future<NavigationActionPolicy> _navigate(NavigationAction action) async {
-    // Never redirect ad, consent, captcha or other subframes into external apps.
+  String _navigationCause(NavigationAction action) {
+    if (action.isRedirect == true) return 'server_redirect';
+    if (action.navigationType == NavigationType.LINK_ACTIVATED)
+      return 'web_link';
+    if (action.navigationType == NavigationType.FORM_SUBMITTED ||
+        action.navigationType == NavigationType.FORM_RESUBMITTED)
+      return 'web_form';
+    if (action.navigationType == NavigationType.BACK_FORWARD)
+      return 'web_history';
+    if (action.navigationType == NavigationType.RELOAD) return 'web_reload';
+    return 'web_other';
+  }
+
+  Future<NavigationActionPolicy> _navigate(
+    NavigationAction action, {
+    NavigationTrace? journal,
+  }) async {
+    // Subframes retain the existing allow policy; only their errors are journalled.
     if (!action.isForMainFrame) return NavigationActionPolicy.ALLOW;
+    final trace = journal ?? _trace;
     final uri = Uri.tryParse(action.request.url?.toString() ?? '');
+    final method = action.request.method?.toLowerCase();
+    trace.action(
+      uri,
+      mainFrame: action.isForMainFrame,
+      cause: _navigationCause(action),
+      method: method == 'get' || method == 'post' ? method! : 'other',
+    );
+    // Keep the existing navigation policy. Never redirect subframes externally.
+    if (!action.isForMainFrame) return NavigationActionPolicy.ALLOW;
     switch (NavigationPolicy.classify(uri)) {
       case LinkAction.web:
-        widget.store.diagnostics.record('web_navigation_allow');
+        trace.event('web_navigation_allow', uri: uri, mainFrame: true);
         return NavigationActionPolicy.ALLOW;
       case LinkAction.external:
-        widget.store.diagnostics.record('web_navigation_external');
+        trace.event('web_navigation_external', uri: uri, mainFrame: true);
         if (uri != null) await _openExternal(uri);
         return NavigationActionPolicy.CANCEL;
       case LinkAction.block:
-        widget.store.diagnostics.record('web_navigation_block');
+        trace.event('web_navigation_block', uri: uri, mainFrame: true);
         _notice(
           'Collegamento non supportato. Usa il sito originale per continuare.',
         );
         return NavigationActionPolicy.CANCEL;
+    }
+  }
+
+  Future<void> _openAccess() async {
+    final c = _web;
+    _trace.command('app_access', destination: NavigationPolicy.home);
+    if (c == null ||
+        _load.failure != null ||
+        routeCategory(Uri.tryParse((await c.getUrl())?.toString() ?? '')) !=
+            'official_home') {
+      _accessAfterHome = true;
+      await _home();
+      return;
+    }
+    try {
+      await c.evaluateJavascript(
+        source: await rootBundle.loadString('assets/access_bridge.js'),
+      );
+      final outcome = await c.evaluateJavascript(
+        source: 'window.__phAccessBridge?.open()',
+      );
+      if (!mounted) return;
+      if (outcome == 'requested' || outcome == 'already_visible') {
+        _trace.event(
+          'web_access_requested',
+          uri: NavigationPolicy.home,
+          cause: 'app_access',
+        );
+        await Future<void>.delayed(const Duration(milliseconds: 500));
+        if (!mounted || c != _web) return;
+        final visible = await c.evaluateJavascript(
+          source: 'window.__phAccessBridge?.probe().passwordVisible === true',
+        );
+        if (visible == true) {
+          _trace.event(
+            'web_access_visible',
+            uri: NavigationPolicy.home,
+            cause: 'app_access',
+          );
+          return;
+        }
+      }
+      _trace.event(
+        'web_access_unavailable',
+        uri: NavigationPolicy.home,
+        cause: 'app_access',
+      );
+      _notice(
+        'Modulo di accesso non riconosciuto o non ancora visibile. Usa i controlli del sito.',
+      );
+    } catch (_) {
+      _trace.event('web_access_unavailable', cause: 'app_access');
+      _notice(
+        'Impossibile aprire il modulo esistente. Usa i controlli del sito.',
+      );
     }
   }
 
@@ -273,6 +369,7 @@ class OfficialWebPageState extends State<OfficialWebPage>
       );
       if (!NavigationPolicy.isOfficial(actual)) return false;
       await controller.evaluateJavascript(source: _script!);
+      _trace.command('app_control');
       final result = await controller.evaluateJavascript(
         source:
             'window.__phNavigation?.click(${jsonEncode(sectionLabels[key] ?? [])}) === true',
@@ -292,10 +389,15 @@ class OfficialWebPageState extends State<OfficialWebPage>
   }
 
   Future<void> _reload() async {
-    widget.store.diagnostics.record('web_retry');
+    _trace.event('web_retry');
     // Recreate only failed/uncreated views. Keep the persistent website store;
     // never delete cookies or modify the official authentication flow.
     final recreate = _web == null || _load.failure != null;
+    _trace.command(
+      recreate ? 'app_retry_home' : 'app_reload',
+      destination: recreate ? NavigationPolicy.home : _uri,
+    );
+    _httpStatus = null;
     _loadStopped = false;
     _load.begin(restart: true);
     if (recreate) {
@@ -315,6 +417,8 @@ class OfficialWebPageState extends State<OfficialWebPage>
   }
 
   Future<void> _home() async {
+    _trace.command('app_home', destination: NavigationPolicy.home);
+    _httpStatus = null;
     if (_web == null || _load.failure != null) {
       await _reload();
       return;
@@ -331,6 +435,7 @@ class OfficialWebPageState extends State<OfficialWebPage>
   }
 
   void _started() {
+    _httpStatus = null;
     _loadStopped = false;
     widget.store.pageStarted();
     _load.begin();
@@ -339,15 +444,20 @@ class OfficialWebPageState extends State<OfficialWebPage>
     });
   }
 
-  Future<void> _finished() async {
-    widget.store.diagnostics.record('web_load_stop');
+  Future<void> _finished(WebUri? url) async {
+    _trace.event(
+      'web_load_stop',
+      uri: Uri.tryParse(url?.toString() ?? ''),
+      mainFrame: true,
+    );
     _loadStopped = true;
     // A cancelled TLS handshake or an empty document is not a loaded page.
     await _verifyDocument();
   }
 
-  void _fail(String category) {
-    widget.store.networkError();
+  void _fail(String category, {int? status}) {
+    _httpStatus = status;
+    widget.store.networkError(status: status);
     _load.fail(category);
     unawaited(_refresh?.endRefreshing());
   }
@@ -454,13 +564,23 @@ class OfficialWebPageState extends State<OfficialWebPage>
 
   Future<void> _popup(CreateWindowAction action) async {
     if (!mounted) return;
+    _trace.event(
+      'web_popup_requested',
+      uri: Uri.tryParse(action.request.url?.toString() ?? ''),
+      cause: 'popup',
+    );
+    final popupTrace = NavigationTrace(
+      widget.store.diagnostics,
+      window: 'popup',
+    );
     await Navigator.of(context).push(
       MaterialPageRoute<void>(
         fullscreenDialog: true,
         builder: (context) => _PopupPage(
           windowId: action.windowId,
           diagnostics: widget.store.diagnostics,
-          navigate: _navigate,
+          trace: popupTrace,
+          navigate: (action) => _navigate(action, journal: popupTrace),
           download: _download,
         ),
       ),
@@ -496,17 +616,24 @@ class OfficialWebPageState extends State<OfficialWebPage>
       onWebViewCreated: (controller) {
         _web = controller;
         widget.store.attach(controller);
-        widget.store.diagnostics.record('web_created');
+        _trace.event('web_created');
       },
       shouldOverrideUrlLoading: (_, action) => _navigate(action),
       onLoadStart: (_, url) {
         if (mounted) {
           _uri = Uri.tryParse(url?.toString() ?? "");
-          widget.store.diagnostics.record('web_load_start');
+          _trace.started(_uri);
           _started();
         }
       },
-      onLoadStop: (_, url) => _finished(),
+      onLoadStop: (_, url) => _finished(url),
+      onDidReceiveServerRedirectForProvisionalNavigation: (_) =>
+          _trace.redirect(),
+      onPageCommitVisible: (_, url) => _trace.event(
+        'web_commit',
+        uri: Uri.tryParse(url?.toString() ?? ''),
+        mainFrame: true,
+      ),
       onProgressChanged: (_, value) {
         if (mounted) _load.updateProgress(value);
       },
@@ -520,7 +647,12 @@ class OfficialWebPageState extends State<OfficialWebPage>
         }
       },
       onUpdateVisitedHistory: (_, url, reload) {
-        widget.store.diagnostics.record('web_history');
+        _trace.event(
+          'web_history',
+          uri: Uri.tryParse(url?.toString() ?? ''),
+          mainFrame: true,
+          cause: 'web_history',
+        );
         unawaited(_scan());
       },
       onWebContentProcessDidTerminate: (_) {
@@ -532,26 +664,32 @@ class OfficialWebPageState extends State<OfficialWebPage>
       },
       onReceivedError: (_, request, error) {
         final cancelled = error.type == WebResourceErrorType.CANCELLED;
-        widget.store.diagnostics.record(
+        _trace.event(
           'web_resource_error',
+          uri: Uri.tryParse(request.url.toString()),
+          mainFrame: request.isForMainFrame,
           code: error.type.toNativeValue(),
-          category: cancelled
-              ? 'cancelled'
-              : request.isForMainFrame == true
-              ? 'main_frame'
-              : 'subframe',
         );
         if (request.isForMainFrame == true && !cancelled) _fail('network');
       },
       onReceivedHttpError: (_, request, response) {
-        widget.store.diagnostics.record(
+        final uri = Uri.tryParse(request.url.toString());
+        _trace.event(
           'web_http_error',
+          uri: uri,
+          mainFrame: request.isForMainFrame,
           status: response.statusCode,
-          category: request.isForMainFrame == true ? 'main_frame' : 'subframe',
         );
         if (request.isForMainFrame == true &&
             (response.statusCode ?? 0) >= 400) {
-          _fail('http');
+          if (response.statusCode == 404)
+            _trace.event(
+              'web_main_404',
+              uri: uri,
+              mainFrame: true,
+              status: 404,
+            );
+          _fail('http', status: response.statusCode);
         }
       },
       // No server-trust override: WKWebView performs normal system TLS validation.
@@ -588,6 +726,7 @@ class OfficialWebPageState extends State<OfficialWebPage>
         ),
         onPressed: () async {
           if (_canBack) {
+            _trace.command('app_back');
             await _web?.goBack();
             await _scan();
           } else {
@@ -708,6 +847,10 @@ class OfficialWebPageState extends State<OfficialWebPage>
                   Positioned.fill(
                     child: LoadFailurePanel(
                       message: _error!,
+                      title: _httpStatus == 404
+                          ? 'Pagina non trovata · HTTP 404'
+                          : 'Riprendiamo da qui',
+                      onAccess: _httpStatus == 404 ? _openAccess : null,
                       onRetry: _reload,
                       onHome: _home,
                     ),
@@ -762,6 +905,14 @@ class OfficialWebPageState extends State<OfficialWebPage>
             child: ListView(
               padding: EdgeInsets.zero,
               children: [
+                ListTile(
+                  leading: const Icon(Icons.login_rounded),
+                  title: const Text('Accesso dalla home ufficiale'),
+                  onTap: () {
+                    Navigator.pop(context);
+                    unawaited(_openAccess());
+                  },
+                ),
                 ListTile(
                   leading: const Icon(Icons.menu_open_rounded),
                   title: const Text('Menu del sito'),
@@ -868,7 +1019,7 @@ class OfficialWebPageState extends State<OfficialWebPage>
                     showAboutDialog(
                       context: context,
                       applicationName: 'PlantHead Fanta',
-                      applicationVersion: '1.1.1 (3)',
+                      applicationVersion: '1.1.2 (4)',
                       children: [
                         const Text(
                           'Client indipendente, non affiliato a Fantacalcio. Le funzioni e le autorizzazioni sono quelle del sito ufficiale. Password gestite esclusivamente dalle pagine web. Nessuna notifica push nativa in questa versione.',
@@ -892,11 +1043,13 @@ class _PopupPage extends StatefulWidget {
   const _PopupPage({
     required this.windowId,
     required this.diagnostics,
+    required this.trace,
     required this.navigate,
     required this.download,
   });
   final int windowId;
   final Diagnostics diagnostics;
+  final NavigationTrace trace;
   final Future<NavigationActionPolicy> Function(NavigationAction) navigate;
   final Future<void> Function(DownloadStartRequest) download;
   @override
@@ -905,9 +1058,12 @@ class _PopupPage extends StatefulWidget {
 
 class _PopupPageState extends State<_PopupPage> {
   String _host = 'Finestra del sito';
+  int? _httpStatus;
   final _load = WebLoadMonitor();
   String? get _error => _load.failure == null
       ? null
+      : _httpStatus == 404
+      ? 'HTTP 404: la pagina richiesta dalla finestra del sito non esiste. Torna alla pagina precedente.'
       : 'La finestra del sito non è disponibile. Riprova o torna alla pagina precedente.';
   @override
   void initState() {
@@ -924,12 +1080,15 @@ class _PopupPageState extends State<_PopupPage> {
 
   @override
   void dispose() {
+    widget.trace.event('web_popup_closed', cause: 'popup');
     _load.removeListener(_changed);
     _load.dispose();
     super.dispose();
   }
 
   Future<void> _retry() async {
+    widget.trace.command('app_reload');
+    _httpStatus = null;
     _load.begin(restart: true);
     try {
       await _controller?.reload();
@@ -960,11 +1119,15 @@ class _PopupPageState extends State<_PopupPage> {
             ),
             onWebViewCreated: (controller) {
               _controller = controller;
-              widget.diagnostics.record('web_created');
+              widget.trace.event('web_created');
             },
             onProgressChanged: (_, value) => _load.updateProgress(value),
             onLoadStop: (controller, url) async {
-              widget.diagnostics.record('web_load_stop');
+              widget.trace.event(
+                'web_load_stop',
+                uri: Uri.tryParse(url?.toString() ?? ''),
+                mainFrame: true,
+              );
               final generation = _load.generation;
               try {
                 final content = await controller.evaluateJavascript(
@@ -978,8 +1141,19 @@ class _PopupPageState extends State<_PopupPage> {
                 widget.diagnostics.record('web_probe_error');
               }
             },
-            onUpdateVisitedHistory: (_, url, reload) =>
-                widget.diagnostics.record('web_history'),
+            onUpdateVisitedHistory: (_, url, reload) => widget.trace.event(
+              'web_history',
+              uri: Uri.tryParse(url?.toString() ?? ''),
+              mainFrame: true,
+              cause: 'web_history',
+            ),
+            onDidReceiveServerRedirectForProvisionalNavigation: (_) =>
+                widget.trace.redirect(),
+            onPageCommitVisible: (_, url) => widget.trace.event(
+              'web_commit',
+              uri: Uri.tryParse(url?.toString() ?? ''),
+              mainFrame: true,
+            ),
             onWebContentProcessDidTerminate: (_) {
               widget.diagnostics.record(
                 'web_process_terminated',
@@ -988,21 +1162,30 @@ class _PopupPageState extends State<_PopupPage> {
               _load.fail('webkit');
             },
             onReceivedHttpError: (_, request, response) {
-              widget.diagnostics.record(
+              final uri = Uri.tryParse(request.url.toString());
+              widget.trace.event(
                 'web_http_error',
+                uri: uri,
+                mainFrame: request.isForMainFrame,
                 status: response.statusCode,
-                category: request.isForMainFrame == true
-                    ? 'main_frame'
-                    : 'subframe',
               );
               if (request.isForMainFrame == true &&
                   (response.statusCode ?? 0) >= 400) {
+                _httpStatus = response.statusCode;
+                if (_httpStatus == 404)
+                  widget.trace.event(
+                    'web_main_404',
+                    uri: uri,
+                    mainFrame: true,
+                    status: 404,
+                  );
                 _load.fail('http');
               }
             },
             shouldOverrideUrlLoading: (_, action) => widget.navigate(action),
             onLoadStart: (_, url) {
-              widget.diagnostics.record('web_load_start');
+              _httpStatus = null;
+              widget.trace.started(Uri.tryParse(url?.toString() ?? ''));
               _load.begin();
               if (mounted) {
                 setState(() {
@@ -1020,14 +1203,11 @@ class _PopupPageState extends State<_PopupPage> {
             ),
             onReceivedError: (_, request, error) {
               final cancelled = error.type == WebResourceErrorType.CANCELLED;
-              widget.diagnostics.record(
+              widget.trace.event(
                 'web_resource_error',
+                uri: Uri.tryParse(request.url.toString()),
+                mainFrame: request.isForMainFrame,
                 code: error.type.toNativeValue(),
-                category: cancelled
-                    ? 'cancelled'
-                    : request.isForMainFrame == true
-                    ? 'main_frame'
-                    : 'subframe',
               );
               if (request.isForMainFrame == true && !cancelled) {
                 _load.fail('network');

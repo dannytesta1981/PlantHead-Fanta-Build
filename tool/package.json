@@ -1,1 +1,1 @@
-{"private":true,"type":"module","scripts":{"test":"node --test navigation.test.mjs data_bridge.test.mjs"},"devDependencies":{"jsdom":"26.1.0"}}
+{"private": true, "type": "module", "scripts": {"test": "node --test navigation.test.mjs data_bridge.test.mjs access_bridge.test.mjs"}, "devDependencies": {"jsdom": "26.1.0"}}

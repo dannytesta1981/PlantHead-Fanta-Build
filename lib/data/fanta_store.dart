@@ -10,6 +10,7 @@ import 'models.dart';
 class FantaStore extends ChangeNotifier {
   final diagnostics = Diagnostics();
   InAppWebViewController? controller;
+  VoidCallback? onWebCommand;
   String session = 'unknown', contextLabel = '', scope = '';
   String? chosenTeam, shirt, rosterTeam;
   List<TeamData> ranking = [], teams = [];
@@ -104,7 +105,7 @@ class FantaStore extends ChangeNotifier {
     notifyListeners();
   }
 
-  void clear() {
+  void clear({bool recordEvent = true}) {
     ranking = [];
     teams = [];
     matches = [];
@@ -118,13 +119,14 @@ class FantaStore extends ChangeNotifier {
     updatedAt = null;
     _lastPayload = '';
     available = {};
-    diagnostics.record('session_cleared');
+    if (recordEvent) diagnostics.record('session_cleared');
     notifyListeners();
   }
 
   void accept(PageSnapshot page) {
     if (page.session == 'login_form') {
-      clear();
+      clear(recordEvent: false);
+      diagnostics.record('login_form_observed');
       session = 'login_form';
       notifyListeners();
       return;
@@ -205,6 +207,7 @@ class FantaStore extends ChangeNotifier {
     try {
       final js = await rootBundle.loadString('assets/navigation.js');
       await c.evaluateJavascript(source: js);
+      onWebCommand?.call();
       final clicked = await c.evaluateJavascript(
         source:
             'window.__phNavigation?.click(${jsonEncode(sectionLabels[section] ?? [])}) === true',

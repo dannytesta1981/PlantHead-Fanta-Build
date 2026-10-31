@@ -7,6 +7,17 @@ import 'package:flutter/foundation.dart';
 class Diagnostics extends ChangeNotifier {
   static const events = {
     'startup',
+    'web_app_command',
+    'web_request',
+    'web_server_redirect',
+    'web_commit',
+    'web_main_404',
+    'web_popup_requested',
+    'web_popup_closed',
+    'web_access_requested',
+    'web_access_unavailable',
+    'web_access_visible',
+    'login_form_observed',
     'web_created',
     'web_visible',
     'web_hidden',
@@ -49,8 +60,39 @@ class Diagnostics extends ChangeNotifier {
     'menu',
     'unknown',
   };
+  int _navigationSequence = 0;
+  int nextNavigation() => ++_navigationSequence;
+  static const routes = {
+    'unknown',
+    'blank',
+    'official_home',
+    'official_login',
+    'official_other',
+    'identity',
+    'external',
+    'blocked',
+  };
+  static const causes = {
+    'unknown',
+    'web_link',
+    'web_form',
+    'web_history',
+    'web_reload',
+    'web_other',
+    'server_redirect',
+    'app_initial_home',
+    'app_home',
+    'app_retry_home',
+    'app_reload',
+    'app_control',
+    'app_back',
+    'app_access',
+    'popup',
+  };
   final List<Map<String, Object>> _entries = [];
-  List<Map<String, Object>> get entries => List.unmodifiable(_entries);
+  List<Map<String, Object>> get entries => List.unmodifiable(
+    _entries.map((entry) => Map<String, Object>.unmodifiable(entry)),
+  );
   void record(
     String event, {
     String section = 'unknown',
@@ -58,6 +100,12 @@ class Diagnostics extends ChangeNotifier {
     int? status,
     int? code,
     String category = 'unknown',
+    String route = 'unknown',
+    String from = 'unknown',
+    String cause = 'unknown',
+    String window = 'unknown',
+    String method = 'unknown',
+    int? navigation,
   }) {
     if (!events.contains(event)) return;
     _entries.add({
@@ -76,6 +124,14 @@ class Diagnostics extends ChangeNotifier {
           ? category
           : 'unknown',
       if (code != null && code >= -9999 && code <= 9999) 'code': code,
+      'route': routes.contains(route) ? route : 'unknown',
+      'from': routes.contains(from) ? from : 'unknown',
+      'cause': causes.contains(cause) ? cause : 'unknown',
+      'window': const {'main', 'popup'}.contains(window) ? window : 'unknown',
+      'method': const {'get', 'post', 'other'}.contains(method)
+          ? method
+          : 'unknown',
+      if (navigation != null) 'navigation': navigation.clamp(0, 1000000),
       'section': sections.contains(section) ? section : 'unknown',
       if (count != null) 'count': count.clamp(0, 10000),
       if (status != null && status >= 100 && status <= 599)
@@ -88,7 +144,7 @@ class Diagnostics extends ChangeNotifier {
   String export({required String session, required Map<String, int> counts}) =>
       const JsonEncoder.withIndent('  ').convert({
         'app': 'PlantHead Fanta',
-        'version': '1.1.1+3',
+        'version': '1.1.2+4',
         'adapter': 'ph-dom/1',
         'platform': Platform.operatingSystem,
         'session':
