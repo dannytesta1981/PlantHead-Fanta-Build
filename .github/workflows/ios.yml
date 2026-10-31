@@ -1,0 +1,88 @@
+name: iOS 1.1.1 build 3 — manual unsigned
+on:
+  workflow_dispatch:
+concurrency:
+  group: ios-manual-build
+  cancel-in-progress: false
+permissions:
+  contents: read
+jobs:
+  ios:
+    if: github.event.repository.private == false
+    runs-on: macos-15
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.35.7'
+          cache: false
+      - run: flutter config --no-analytics
+      - run: flutter pub get --enforce-lockfile
+      - run: dart format --output=none --set-exit-if-changed lib test integration_test test_driver
+      - run: flutter analyze --no-pub
+      - run: flutter test --no-pub
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm ci && npm test
+        working-directory: tool
+      - name: Compile physical iOS device app without signing
+        run: flutter build ios --release --no-codesign --no-pub --build-name=1.1.1 --build-number=3
+      - name: Package actual app for external signing
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -d build/ios/iphoneos/Runner.app
+          plutil -lint build/ios/iphoneos/Runner.app/Info.plist
+          EXECUTABLE=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' build/ios/iphoneos/Runner.app/Info.plist)
+          test -x "build/ios/iphoneos/Runner.app/$EXECUTABLE"
+          xcrun lipo "build/ios/iphoneos/Runner.app/$EXECUTABLE" -verify_arch arm64
+          file "build/ios/iphoneos/Runner.app/$EXECUTABLE"
+          /usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' build/ios/iphoneos/Runner.app/Info.plist
+          mkdir -p build/feather/Payload
+          cp -R build/ios/iphoneos/Runner.app build/feather/Payload/
+          cd build/feather
+          /usr/bin/ditto -c -k --keepParent Payload PlantHead_Fanta-1.1.1-unsigned.ipa
+          unzip -t PlantHead_Fanta-1.1.1-unsigned.ipa
+          shasum -a 256 PlantHead_Fanta-1.1.1-unsigned.ipa > SHA256.txt
+      - name: Validate IPA contents
+        run: python3 tool/verify_ipa.py build/feather/PlantHead_Fanta-1.1.1-unsigned.ipa > build/feather/VERIFICATION.json
+      - name: Real WKWebView regression on iPhone simulator
+        continue-on-error: true
+        timeout-minutes: 18
+        shell: bash
+        run: |
+          set -uo pipefail
+          echo 'NOT_COMPLETED' > build/feather/WEBVIEW_RESULT.txt
+          DEVICE=$(xcrun simctl list devices available -j | python3 -c 'import json,sys; d=json.load(sys.stdin); print(next(x["udid"] for group in d["devices"].values() for x in group if x["name"].startswith("iPhone")))')
+          xcrun simctl boot "$DEVICE" || true
+          xcrun simctl bootstatus "$DEVICE" -b
+          curl --fail --location --max-time 45 --output /dev/null --silent --show-error https://leghe.fantacalcio.it/
+          NETWORK_STATUS=$?
+          echo "RUNNER_HTTPS_EXIT=$NETWORK_STATUS" > build/feather/NETWORK_RESULT.txt
+          flutter drive --driver=test_driver/ios_webview_driver.dart --target=integration_test/ios_webview_test.dart -d "$DEVICE" --no-pub > build/ios-webview-driver.log 2>&1
+          TEST_STATUS=$?
+          echo "INTEGRATION_EXIT=$TEST_STATUS" > build/feather/WEBVIEW_RESULT.txt
+          xcrun simctl io "$DEVICE" screenshot build/feather/iOS-final-state.png || true
+          xcrun simctl spawn "$DEVICE" log show --last 15m --style json --predicate 'process == "Runner" OR process CONTAINS "WebKit"' > build/ios-webkit-system.json 2>/dev/null || true
+          python3 tool/summarize_webkit_logs.py build/ios-webkit-system.json > build/feather/WEBKIT_SUMMARY.json
+          # Never publish raw plugin, network or WebKit logs.
+          echo "WKWebView integration exit: $TEST_STATUS"
+          exit "$TEST_STATUS"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: PlantHead-Fanta-1.1.1-build3-unsigned-Feather
+          retention-days: 3
+          path: |
+            build/feather/*.ipa
+            build/feather/SHA256.txt
+            build/feather/VERIFICATION.json
+            build/feather/WEBVIEW_RESULT.txt
+            build/feather/NETWORK_RESULT.txt
+            build/feather/WEBKIT_SUMMARY.json
+            build/feather/ios-webview-results.json
+            build/feather/*.png
+            ios/Podfile.lock
+          if-no-files-found: error

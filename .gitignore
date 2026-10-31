@@ -1,0 +1,23 @@
+# Generated and private material must never enter this public tree.
+.dart_tool/
+build/
+.flutter-plugins*
+**/ephemeral/
+ios/Pods/
+ios/.symlinks/
+ios/Flutter/Generated.xcconfig
+ios/Flutter/flutter_export_environment.sh
+ios/Flutter/Flutter.podspec
+ios/Runner/GeneratedPluginRegistrant.*
+**/xcuserdata/
+docs/qa/
+.env*
+*.p12
+*.p8
+*.pem
+*.key
+*.jks
+*.keystore
+*.mobileprovision
+*.ipa
+*.apk
