@@ -1,9 +1,6 @@
 name: iOS 1.1.5 build 8 — manual unsigned
 on:
   workflow_dispatch:
-  push:
-    branches: [main]
-    paths: ['assets/official_access.js']
 concurrency:
   group: ios-manual-build
   cancel-in-progress: false

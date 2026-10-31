@@ -3,7 +3,7 @@
  if(location.origin!=='https://leghe.fantacalcio.it'||location.pathname!=='/') return false;
  const check=e=>{
   if(!e||!e.isConnected)return 1;
-  if(e.disabled||e.getAttribute('aria-disabled')==='true'||e.form)return 3;
+  if(e.disabled||e.getAttribute('aria-disabled')==='true'||(e.tagName==='BUTTON'&&e.form))return 3;
   for(let a=e;a;a=a.parentElement){const s=getComputedStyle(a);if(a.hidden||a.inert)return 4;if(s.display==='none')return a===e?5:6;if(s.visibility==='hidden'||s.visibility==='collapse')return a===e?7:8;if(parseFloat(s.opacity)<=0)return a===e?9:10;}
   const r=e.getBoundingClientRect();if(r.width<=0||r.height<=0)return 11;
   if(getComputedStyle(e).pointerEvents==='none')return 12;
