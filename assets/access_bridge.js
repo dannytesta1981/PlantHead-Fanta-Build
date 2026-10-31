@@ -14,7 +14,10 @@
     const target = b.getAttribute('data-target');
     if (!/^#[a-zA-Z][a-zA-Z0-9_-]{0,80}$/.test(target || '')) return false;
     const dialog = document.getElementById(target.slice(1));
-    return dialog?.getAttribute('role') === 'dialog' && !!dialog.querySelector('form input[type="password"]');
+    // The official site may render its fields lazily from its own template.
+    // Activate only the existing modal trigger; never render/parse that template.
+    return dialog?.getAttribute('role') === 'dialog' &&
+      !!dialog.querySelector('form input[type="password"], form#formLogin[name="login"] script#loginFormTemplate1[type="text/x-handlebars-template"]');
   });
   window.__phAccessBridge = {
     probe() { return {passwordVisible: fields().some(visible), dialogTriggers: candidates().length}; },

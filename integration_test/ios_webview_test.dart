@@ -9,7 +9,7 @@ import 'package:planthead_fanta/ui/native_home.dart';
 void main() {
   final binding = IntegrationTestWidgetsFlutterBinding.ensureInitialized();
   testWidgets(
-    'trace existing login link and verify home-dialog recovery in WKWebView',
+    'verify official login modal without navigating to login route in WKWebView',
     (tester) async {
       final store = FantaStore();
       final result = <String, dynamic>{};
@@ -40,6 +40,8 @@ void main() {
           const r=p?.getBoundingClientRect(); return {
             officialOrigin:location.origin==='https://leghe.fantacalcio.it',
             passwordVisible:!!r && r.width>0 && r.height>0,
+            passwordEnabled:!!p && !p.disabled && !p.readOnly,
+            usernamePresent:!!p?.closest('form')?.querySelector('input[autocomplete="username"],input[name="username"]'),
             ready:document.readyState==='complete'}; })())
       ''',
               )
@@ -67,36 +69,8 @@ void main() {
         phase('probing_initial_document');
         result['initialDocument'] = await probe();
         phase('initial_document_probed');
-        // Follow only the /login anchor actually supplied by the current home.
-        // This opens no account and never submits the login form.
-        final followed = await store.controller
-            ?.evaluateJavascript(
-              source: r'''
-        (()=>{const a=Array.from(document.querySelectorAll('a[href]')).find(e=>{
-          const u=new URL(e.href,location.href);return u.origin===location.origin && u.pathname==='/login';});
-          if(!a)return false;a.click();return true;})()
-      ''',
-            )
-            .timeout(const Duration(seconds: 8), onTimeout: () => false);
-        result['existingLoginAnchorFollowed'] = followed == true;
-        phase('existing_link_followed');
-        if (followed == true) {
-          await waitFor(
-            () =>
-                store.diagnostics.entries.any(
-                  (e) => e['event'] == 'web_main_404',
-                ) ||
-                find
-                    .text('Pagina non trovata · HTTP 404')
-                    .evaluate()
-                    .isNotEmpty,
-            20,
-          );
-        }
-        result['main404Reproduced'] = store.diagnostics.entries.any(
-          (e) => e['event'] == 'web_main_404',
-        );
-        await binding.takeScreenshot('iOS-1.1.2-login-link-result');
+        // Exercise the supported modal only. Never click the known failing anchor.
+        result['existingLoginAnchorFollowed'] = false;
         // User-visible recovery invokes the existing modal trigger, not a guessed route.
         phase('recovery_started');
         final recoveryStart = store.diagnostics.entries.length;
@@ -128,7 +102,7 @@ void main() {
         result['flutterErrorVisible'] =
             find.text('Pagina non trovata · HTTP 404').evaluate().isNotEmpty ||
             find.text('Riprendiamo da qui').evaluate().isNotEmpty;
-        await binding.takeScreenshot('iOS-1.1.2-home-login-recovery');
+        await binding.takeScreenshot('iOS-1.1.3-home-login-recovery');
         final controller = store.controller;
         await tester.tap(find.byTooltip('Torna all’app nativa'));
         await tester.pump(const Duration(seconds: 1));
@@ -136,11 +110,17 @@ void main() {
         await tester.tap(find.byTooltip('Lega e accesso'));
         await tester.pump(const Duration(seconds: 2));
         result['controllerPreserved'] = identical(controller, store.controller);
-        await binding.takeScreenshot('iOS-1.1.2-reopened-access');
+        await binding.takeScreenshot('iOS-1.1.3-reopened-access');
+        result['unexpectedLoginNavigation'] = store.diagnostics.entries.any(
+          (e) => e['event'] == 'web_request' && e['route'] == 'official_login',
+        );
         final doc = result['recoveredDocument'] as Map;
+        expect(result['unexpectedLoginNavigation'], false);
         expect(result['recoveryHomeCommands'] as int, lessThanOrEqualTo(1));
         expect(doc['officialOrigin'], true);
         expect(doc['passwordVisible'], true);
+        expect(doc['passwordEnabled'], true);
+        expect(doc['usernamePresent'], true);
         expect(result['accessVisibleEvent'], true);
         expect(result['flutterErrorVisible'], false);
         expect(result['controllerPreserved'], true);

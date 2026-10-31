@@ -25,3 +25,10 @@ test('unknown, ambiguous and submit controls are not activated',()=>{
  assert.equal(d.window.__phAccessBridge.open(),'unavailable');
  const wrong=page('<button>LOGIN</button>','https://example.test');assert.equal(wrong.window.__phAccessBridge,undefined);
 });
+
+test('official lazy template can be activated without rendering or submitting it',()=>{
+ const d=page('<button data-toggle="modal" data-target="#loginModal">LOGIN</button><div id="loginModal" role="dialog"><form id="formLogin" name="login"><script id="loginFormTemplate1" type="text/x-handlebars-template">template</script></form></div>');
+ let clicked=0;d.window.document.querySelector('button').onclick=()=>clicked++;
+ assert.equal(d.window.__phAccessBridge.open(),'requested');
+ assert.equal(clicked,1);assert.equal(d.window.document.querySelector('input'),null);
+});
