@@ -1,6 +1,9 @@
-name: iOS 1.1.4 build 7 — manual unsigned
+name: iOS 1.1.5 build 8 — manual unsigned
 on:
   workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ['assets/official_access.js']
 concurrency:
   group: ios-manual-build
   cancel-in-progress: false
@@ -28,7 +31,7 @@ jobs:
       - run: npm ci && npm test
         working-directory: tool
       - name: Compile physical iOS device app without signing
-        run: flutter build ios --release --no-codesign --no-pub --build-name=1.1.4 --build-number=7
+        run: flutter build ios --release --no-codesign --no-pub --build-name=1.1.5 --build-number=8
       - name: Package actual app for external signing
         shell: bash
         run: |
@@ -43,11 +46,11 @@ jobs:
           mkdir -p build/feather/Payload
           cp -R build/ios/iphoneos/Runner.app build/feather/Payload/
           cd build/feather
-          /usr/bin/ditto -c -k --keepParent Payload PlantHead_Fanta-1.1.4-unsigned.ipa
-          unzip -t PlantHead_Fanta-1.1.4-unsigned.ipa
-          shasum -a 256 PlantHead_Fanta-1.1.4-unsigned.ipa > SHA256.txt
+          /usr/bin/ditto -c -k --keepParent Payload PlantHead_Fanta-1.1.5-unsigned.ipa
+          unzip -t PlantHead_Fanta-1.1.5-unsigned.ipa
+          shasum -a 256 PlantHead_Fanta-1.1.5-unsigned.ipa > SHA256.txt
       - name: Validate IPA contents
-        run: python3 tool/verify_ipa.py build/feather/PlantHead_Fanta-1.1.4-unsigned.ipa > build/feather/VERIFICATION.json
+        run: python3 tool/verify_ipa.py build/feather/PlantHead_Fanta-1.1.5-unsigned.ipa > build/feather/VERIFICATION.json
       - name: Compile simulator test app separately
         id: sim_build
         timeout-minutes: 10
@@ -87,7 +90,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: PlantHead-Fanta-1.1.4-build7-unsigned-Feather
+          name: PlantHead-Fanta-1.1.5-build8-unsigned-Feather
           retention-days: 3
           path: |
             build/feather/*.ipa

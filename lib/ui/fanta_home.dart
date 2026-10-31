@@ -262,6 +262,39 @@ class OfficialWebPageState extends State<OfficialWebPage>
     }
   }
 
+  Future<void> _openOfficialAccess() async {
+    final c = _web;
+    if (c == null || !widget.visible) return;
+    const reasons = <int, String>{
+      0: 'Modulo ufficiale visibile. Puoi accedere dalla pagina.',
+      1: 'Pulsante LOGIN principale assente.',
+      2: 'Più pulsanti LOGIN principali: azione annullata.',
+      3: 'Pulsante disabilitato o associato a un form.',
+      4: 'Controllo o antenato hidden/inert.',
+      5: 'Pulsante con display none.', 6: 'Antenato con display none.',
+      7: 'Pulsante con visibility nascosta.', 8: 'Antenato con visibility nascosta.',
+      9: 'Pulsante con opacità zero.', 10: 'Antenato con opacità zero.',
+      11: 'Pulsante senza dimensioni visibili.', 12: 'Interazione pointer-events disabilitata.',
+      13: 'Pulsante fuori schermo: scorri manualmente fino a LOGIN e riprova.',
+      14: 'Pulsante coperto da un altro elemento.',
+      15: 'Modale ufficiale assente o ambigua.',
+      16: 'Plugin ufficiale della modale non disponibile.',
+      17: 'Click eseguito, ma il campo password non è diventato utilizzabile.',
+      18: 'Pagina non supportata o verifica non completata.',
+    };
+    var code = 18;
+    try {
+      final installed = await c.evaluateJavascript(source: await rootBundle.loadString('assets/official_access.js'));
+      if (installed == true) {
+        final response = await c.callAsyncJavaScript(functionBody: 'return await window.__phOfficialAccess.open();').timeout(const Duration(seconds: 5));
+        final result = response?.value;
+        if (result is int && reasons.containsKey(result)) code = result;
+      }
+    } catch (_) {}
+    widget.store.diagnostics.record('access_inspection', code: code);
+    _notice(reasons[code]!);
+  }
+
   Future<void> _verifyAccess() async {
     final c = _web;
     if (c == null || !widget.visible) {
@@ -950,6 +983,14 @@ class OfficialWebPageState extends State<OfficialWebPage>
             child: ListView(
               padding: EdgeInsets.zero,
               children: [
+                ListTile(
+                  leading: const Icon(Icons.login_rounded),
+                  title: const Text('Apri accesso ufficiale'),
+                  onTap: () {
+                    Navigator.pop(context);
+                    unawaited(_openOfficialAccess());
+                  },
+                ),
                 ListTile(
                   leading: const Icon(Icons.search_rounded),
                   title: const Text('Verifica accesso'),

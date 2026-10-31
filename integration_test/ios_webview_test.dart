@@ -76,7 +76,7 @@ void main() {
         final recoveryStart = store.diagnostics.entries.length;
         await tester.tap(find.byTooltip('Menu PlantHead'));
         await tester.pump(const Duration(milliseconds: 500));
-        await tester.tap(find.text('Verifica accesso'));
+        await tester.tap(find.text('Apri accesso ufficiale'));
         await tester.pump();
         await waitFor(
           () => store.diagnostics.entries.any(
