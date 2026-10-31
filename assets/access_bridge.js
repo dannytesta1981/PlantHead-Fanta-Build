@@ -19,7 +19,25 @@
     return dialog?.getAttribute('role') === 'dialog' &&
       !!dialog.querySelector('form input[type="password"], form#formLogin[name="login"] script#loginFormTemplate1[type="text/x-handlebars-template"]');
   });
+  const inspect = () => {
+    const all = Array.from(document.querySelectorAll('button[data-toggle="modal"][data-target]'))
+      .filter(b => /^(login|accedi)$/i.test((b.getAttribute('aria-label') || b.textContent || '').trim()));
+    const dialog = document.querySelector('[role="dialog"]#loginModal');
+    // Presence of a plugin is not proof that its handlers or Auth.init ran.
+    return {
+      command: 'executed',
+      trigger: !all.length ? 'absent_active_dom' : all.every(b=>!visible(b)) ? 'hidden' :
+        all.every(b=>b.disabled || b.form) ? 'disabled_or_form_owned' : candidates().length===1 ? 'eligible_unique' : 'unmatched_or_ambiguous',
+      dialog: !dialog ? 'absent' : visible(dialog) ? 'visible' : 'hidden',
+      password: !fields().length ? 'absent' : fields().some(visible) ? 'visible' : 'hidden',
+      plugin: typeof window.jQuery?.fn?.modal === 'function' ? 'present' : 'absent',
+      handler: 'unknown',
+      initialization: 'unknown',
+      ready: ['loading','interactive','complete'].includes(document.readyState) ? document.readyState : 'unknown'
+    };
+  };
   window.__phAccessBridge = {
+    inspect,
     probe() { return {passwordVisible: fields().some(visible), dialogTriggers: candidates().length}; },
     open() {
       if (fields().some(visible)) return 'already_visible';

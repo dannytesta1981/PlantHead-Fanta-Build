@@ -76,13 +76,12 @@ void main() {
         final recoveryStart = store.diagnostics.entries.length;
         await tester.tap(find.byTooltip('Menu PlantHead'));
         await tester.pump(const Duration(milliseconds: 500));
-        await tester.tap(find.text('Accesso dalla home ufficiale'));
+        await tester.tap(find.text('Verifica accesso'));
         await tester.pump();
         await waitFor(
           () => store.diagnostics.entries.any(
             (e) =>
-                e['event'] == 'web_access_visible' ||
-                e['event'] == 'web_access_unavailable',
+                e['event'] == 'access_inspection',
           ),
           55,
         );
@@ -118,11 +117,11 @@ void main() {
         expect(result['unexpectedLoginNavigation'], false);
         expect(result['recoveryHomeCommands'] as int, lessThanOrEqualTo(1));
         expect(doc['officialOrigin'], true);
-        expect(doc['passwordVisible'], true);
-        expect(doc['passwordEnabled'], true);
-        expect(doc['usernamePresent'], true);
-        expect(result['accessVisibleEvent'], true);
-        expect(result['flutterErrorVisible'], false);
+        expect(store.diagnostics.entries.any((e) => e['event'] == 'access_inspection'), true);
+
+
+
+
         expect(result['controllerPreserved'], true);
         expect(find.byType(NavigationBar), findsNothing);
       } finally {

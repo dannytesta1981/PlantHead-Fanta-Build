@@ -1,7 +1,7 @@
 name: planthead_fanta
 description: Client indipendente per le pagine ufficiali Leghe Fantacalcio.
 publish_to: none
-version: 1.1.3+6
+version: 1.1.4+7
 environment:
   sdk: '>=3.9.0 <4.0.0'
 dependencies:
@@ -24,3 +24,4 @@ flutter:
     - assets/navigation.js
     - assets/data_bridge.js
     - assets/access_bridge.js
+    - assets/access_inspection.js

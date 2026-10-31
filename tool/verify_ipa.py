@@ -16,8 +16,8 @@ with zipfile.ZipFile(ipa) as z:
     plist=plistlib.loads(z.read(plists[0]))
     app=plists[0].removesuffix('Info.plist')
     assert plist['CFBundleIdentifier']=='it.planthead.fanta'
-    assert plist['CFBundleShortVersionString']=='1.1.3'
-    assert plist['CFBundleVersion']=='6'
+    assert plist['CFBundleShortVersionString']=='1.1.4'
+    assert plist['CFBundleVersion']=='7'
     assert plist['CFBundlePackageType']=='APPL'
     assert 'iPhoneOS' in plist['CFBundleSupportedPlatforms']
     binaries=[app+plist['CFBundleExecutable'],app+'Frameworks/App.framework/App',app+'Frameworks/Flutter.framework/Flutter']
@@ -36,7 +36,7 @@ with zipfile.ZipFile(ipa) as z:
             raise AssertionError(f'{name}: invalid Mach-O magic {magic.hex()}')
         assert len(data)>10000, f'{name}: unexpected binary size'
         checks.append({'file':name,'bytes':len(data),'arm64_macho':True})
-    for asset in ['navigation.js', 'data_bridge.js', 'access_bridge.js']:
+    for asset in ['navigation.js', 'data_bridge.js', 'access_bridge.js', 'access_inspection.js']:
         assets=[n for n in names if n.endswith('/flutter_assets/assets/'+asset)]
         assert len(assets)==1
         assert z.read(assets[0])==Path(__file__).resolve().parents[1].joinpath('assets',asset).read_bytes()

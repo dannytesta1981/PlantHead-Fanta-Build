@@ -32,3 +32,10 @@ test('official lazy template can be activated without rendering or submitting it
  assert.equal(d.window.__phAccessBridge.open(),'requested');
  assert.equal(clicked,1);assert.equal(d.window.document.querySelector('input'),null);
 });
+test('inspection reports hidden dialog and absent plugin without leaking field values',()=>{
+ const d=page('<div id="loginModal" role="dialog" style="display:none"><form><input type="password" value="SECRET_FIXTURE"></form></div>');
+ const x=d.window.__phAccessBridge.inspect();
+ assert.equal(x.command,'executed');assert.equal(x.trigger,'absent_active_dom');
+ assert.equal(x.dialog,'hidden');assert.equal(x.plugin,'absent');assert.equal(x.handler,'unknown');
+ assert.ok(!JSON.stringify(x).includes('SECRET_FIXTURE'));
+});

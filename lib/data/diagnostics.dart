@@ -7,6 +7,7 @@ import 'package:flutter/foundation.dart';
 class Diagnostics extends ChangeNotifier {
   static const events = {
     'startup',
+    'access_inspection',
     'web_app_command',
     'web_request',
     'web_server_redirect',
@@ -93,6 +94,31 @@ class Diagnostics extends ChangeNotifier {
   List<Map<String, Object>> get entries => List.unmodifiable(
     _entries.map((entry) => Map<String, Object>.unmodifiable(entry)),
   );
+  void recordAccessInspection(dynamic raw) {
+    const fields = <String, List<String>>{
+      'command': ['executed', 'origin_rejected', 'execution_failed', 'not_visible'],
+      'trigger': ['absent_active_dom', 'hidden', 'disabled_or_form_owned', 'eligible_unique', 'unmatched_or_ambiguous', 'excluded', 'ambiguous', 'recognized'],
+      'dialog': ['absent', 'hidden', 'visible'],
+      'password': ['absent', 'hidden', 'visible'],
+      'username': ['absent', 'hidden', 'visible'],
+      'passwordEnabled': ['absent', 'disabled', 'enabled'],
+      'usernameEnabled': ['absent', 'disabled', 'enabled'],
+      'modalInstance': ['unknown', 'present', 'absent'],
+      'plugin': ['absent', 'present'],
+      'handler': ['unknown'],
+      'initialization': ['unknown'],
+      'ready': ['loading', 'interactive', 'complete', 'unknown'],
+    };
+    if (raw is! Map) return;
+    final safe = <String, Object>{};
+    for (final entry in fields.entries) {
+      if (entry.value.contains(raw[entry.key])) safe[entry.key] = raw[entry.key] as String;
+    }
+    _entries.add({'at': DateTime.now().toUtc().toIso8601String(), 'event': 'access_inspection', ...safe});
+    if (_entries.length > 150) _entries.removeAt(0);
+    notifyListeners();
+  }
+
   void record(
     String event, {
     String section = 'unknown',
@@ -144,7 +170,7 @@ class Diagnostics extends ChangeNotifier {
   String export({required String session, required Map<String, int> counts}) =>
       const JsonEncoder.withIndent('  ').convert({
         'app': 'PlantHead Fanta',
-        'version': '1.1.3+6',
+        'version': '1.1.4+7',
         'adapter': 'ph-dom/1',
         'platform': Platform.operatingSystem,
         'session':

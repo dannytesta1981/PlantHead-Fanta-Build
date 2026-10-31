@@ -262,6 +262,25 @@ class OfficialWebPageState extends State<OfficialWebPage>
     }
   }
 
+  Future<void> _verifyAccess() async {
+    final c = _web;
+    if (c == null || !widget.visible) {
+      widget.store.diagnostics.recordAccessInspection({'command': 'not_visible'});
+      return;
+    }
+    try {
+      final raw = await c.evaluateJavascript(
+        source: await rootBundle.loadString('assets/access_inspection.js'),
+      ).timeout(const Duration(seconds: 8));
+      if (raw is! String) throw const FormatException();
+      widget.store.diagnostics.recordAccessInspection(jsonDecode(raw));
+      _notice('Verifica registrata. Menu nativo → Diagnostica → Esporta.');
+    } catch (_) {
+      widget.store.diagnostics.recordAccessInspection({'command': 'execution_failed'});
+      _notice('Verifica non completata. Esporta la diagnostica.');
+    }
+  }
+
   Future<void> _openAccess({bool afterHome = false}) async {
     final c = _web;
     _trace.command('app_access', destination: NavigationPolicy.home);
@@ -275,6 +294,12 @@ class OfficialWebPageState extends State<OfficialWebPage>
         await c.evaluateJavascript(
           source: await rootBundle.loadString('assets/access_bridge.js'),
         );
+        final inspection = await c.evaluateJavascript(
+          source: 'JSON.stringify(window.__phAccessBridge?.inspect() ?? null)',
+        );
+        if (inspection is String) {
+          widget.store.diagnostics.recordAccessInspection(jsonDecode(inspection));
+        }
         // A legitimate site redirect may already expose the login form. Preserve
         // that page and its state, rather than forcing another home navigation.
         var visible = await c.evaluateJavascript(
@@ -925,6 +950,15 @@ class OfficialWebPageState extends State<OfficialWebPage>
             child: ListView(
               padding: EdgeInsets.zero,
               children: [
+                ListTile(
+                  leading: const Icon(Icons.search_rounded),
+                  title: const Text('Verifica accesso'),
+                  subtitle: const Text('Osservazione senza click o navigazioni'),
+                  onTap: () {
+                    Navigator.pop(context);
+                    unawaited(_verifyAccess());
+                  },
+                ),
                 ListTile(
                   leading: const Icon(Icons.login_rounded),
                   title: const Text('Accesso dalla home ufficiale'),
