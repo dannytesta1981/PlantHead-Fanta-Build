@@ -1,4 +1,4 @@
-name: iOS 1.1.2 build 4 — manual unsigned
+name: iOS 1.1.2 build 5 — manual unsigned
 on:
   workflow_dispatch:
 concurrency:
@@ -28,7 +28,7 @@ jobs:
       - run: npm ci && npm test
         working-directory: tool
       - name: Compile physical iOS device app without signing
-        run: flutter build ios --release --no-codesign --no-pub --build-name=1.1.2 --build-number=4
+        run: flutter build ios --release --no-codesign --no-pub --build-name=1.1.2 --build-number=5
       - name: Package actual app for external signing
         shell: bash
         run: |
@@ -73,7 +73,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: PlantHead-Fanta-1.1.2-build4-unsigned-Feather
+          name: PlantHead-Fanta-1.1.2-build5-unsigned-Feather
           retention-days: 3
           path: |
             build/feather/*.ipa

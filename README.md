@@ -1,12 +1,12 @@
 # PlantHead Fanta — iOS build
 
-Minimal reviewed build tree for **1.1.2 (4)**, bundle `it.planthead.fanta`.
+Minimal reviewed build tree for **1.1.2 (5)**, bundle `it.planthead.fanta`.
 
 Only the iOS project, Flutter runtime sources, two JavaScript assets, dependency
 lockfiles and tests are included. No original Git history, authenticated data,
 private screenshots, signing keys or credentials are included.
 
-Open Actions → iOS 1.1.2 build 4 → Run workflow. Only manual dispatch is enabled.
+Open Actions → iOS 1.1.2 build 5 → Run workflow. Only manual dispatch is enabled.
 The workflow uses the standard `macos-15` public runner, no certificates and no
 paid services. It runs Flutter and JavaScript tests, compiles unsigned ARM64,
 validates the IPA and attempts a real WKWebView login-page rendering test.

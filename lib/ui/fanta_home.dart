@@ -189,7 +189,7 @@ class OfficialWebPageState extends State<OfficialWebPage>
         await _scan();
         if (_accessAfterHome) {
           _accessAfterHome = false;
-          unawaited(_openAccess());
+          unawaited(_openAccess(afterHome: true));
         }
       }
     } catch (_) {
@@ -262,53 +262,73 @@ class OfficialWebPageState extends State<OfficialWebPage>
     }
   }
 
-  Future<void> _openAccess() async {
+  Future<void> _openAccess({bool afterHome = false}) async {
     final c = _web;
     _trace.command('app_access', destination: NavigationPolicy.home);
-    if (c == null ||
-        _load.failure != null ||
-        routeCategory(Uri.tryParse((await c.getUrl())?.toString() ?? '')) !=
-            'official_home') {
-      _accessAfterHome = true;
-      await _home();
-      return;
-    }
     try {
-      await c.evaluateJavascript(
-        source: await rootBundle.loadString('assets/access_bridge.js'),
-      );
-      final outcome = await c.evaluateJavascript(
-        source: 'window.__phAccessBridge?.open()',
-      );
-      if (!mounted) return;
-      if (outcome == 'requested' || outcome == 'already_visible') {
-        _trace.event(
-          'web_access_requested',
-          uri: NavigationPolicy.home,
-          cause: 'app_access',
+      final actual = c == null
+          ? null
+          : Uri.tryParse((await c.getUrl())?.toString() ?? '');
+      if (c != null &&
+          _load.failure == null &&
+          NavigationPolicy.isOfficial(actual)) {
+        await c.evaluateJavascript(
+          source: await rootBundle.loadString('assets/access_bridge.js'),
         );
-        await Future<void>.delayed(const Duration(milliseconds: 500));
-        if (!mounted || c != _web) return;
-        final visible = await c.evaluateJavascript(
+        // A legitimate site redirect may already expose the login form. Preserve
+        // that page and its state, rather than forcing another home navigation.
+        var visible = await c.evaluateJavascript(
           source: 'window.__phAccessBridge?.probe().passwordVisible === true',
         );
+        if (visible != true && routeCategory(actual) == 'official_home') {
+          final outcome = await c.evaluateJavascript(
+            source: 'window.__phAccessBridge?.open()',
+          );
+          if (outcome == 'requested') {
+            _trace.event(
+              'web_access_requested',
+              uri: actual,
+              cause: 'app_access',
+            );
+            await Future<void>.delayed(const Duration(milliseconds: 500));
+            if (!mounted || c != _web) return;
+            visible = await c.evaluateJavascript(
+              source:
+                  'window.__phAccessBridge?.probe().passwordVisible === true',
+            );
+          }
+        }
+        if (!mounted || c != _web) return;
         if (visible == true) {
+          _trace.event('web_access_visible', uri: actual, cause: 'app_access');
+          return;
+        }
+        if (routeCategory(actual) == 'official_home' || afterHome) {
           _trace.event(
-            'web_access_visible',
-            uri: NavigationPolicy.home,
+            'web_access_unavailable',
+            uri: actual,
             cause: 'app_access',
+          );
+          _notice(
+            'Modulo non riconosciuto o non ancora visibile. Usa i controlli della pagina ufficiale.',
           );
           return;
         }
       }
-      _trace.event(
-        'web_access_unavailable',
-        uri: NavigationPolicy.home,
-        cause: 'app_access',
-      );
-      _notice(
-        'Modulo di accesso non riconosciuto o non ancora visibile. Usa i controlli del sito.',
-      );
+      if (afterHome) {
+        _trace.event(
+          'web_access_unavailable',
+          uri: actual,
+          cause: 'app_access',
+        );
+        _notice(
+          'Il ritorno alla home non ha reso disponibile il modulo. Usa i controlli del sito.',
+        );
+        return;
+      }
+      // At most one app-issued home recovery per explicit user action.
+      _accessAfterHome = true;
+      await _home();
     } catch (_) {
       _trace.event('web_access_unavailable', cause: 'app_access');
       _notice(
@@ -1019,7 +1039,7 @@ class OfficialWebPageState extends State<OfficialWebPage>
                     showAboutDialog(
                       context: context,
                       applicationName: 'PlantHead Fanta',
-                      applicationVersion: '1.1.2 (4)',
+                      applicationVersion: '1.1.2 (5)',
                       children: [
                         const Text(
                           'Client indipendente, non affiliato a Fantacalcio. Le funzioni e le autorizzazioni sono quelle del sito ufficiale. Password gestite esclusivamente dalle pagine web. Nessuna notifica push nativa in questa versione.',

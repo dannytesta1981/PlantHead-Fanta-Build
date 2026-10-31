@@ -73,6 +73,7 @@ void main() {
         );
         await binding.takeScreenshot('iOS-1.1.2-login-link-result');
         // User-visible recovery invokes the existing modal trigger, not a guessed route.
+        final recoveryStart = store.diagnostics.entries.length;
         await tester.tap(find.byTooltip('Menu PlantHead'));
         await tester.pumpAndSettle(const Duration(milliseconds: 100));
         await tester.tap(find.text('Accesso dalla home ufficiale'));
@@ -86,6 +87,13 @@ void main() {
           55,
         );
         result['recoveredDocument'] = await probe();
+        result['recoveryHomeCommands'] = store.diagnostics.entries
+            .skip(recoveryStart)
+            .where(
+              (e) =>
+                  e['event'] == 'web_app_command' && e['cause'] == 'app_home',
+            )
+            .length;
         result['accessVisibleEvent'] = store.diagnostics.entries.any(
           (e) => e['event'] == 'web_access_visible',
         );
@@ -102,6 +110,7 @@ void main() {
         result['controllerPreserved'] = identical(controller, store.controller);
         await binding.takeScreenshot('iOS-1.1.2-reopened-access');
         final doc = result['recoveredDocument'] as Map;
+        expect(result['recoveryHomeCommands'] as int, lessThanOrEqualTo(1));
         expect(doc['officialOrigin'], true);
         expect(doc['passwordVisible'], true);
         expect(result['accessVisibleEvent'], true);
