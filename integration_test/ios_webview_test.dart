@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
@@ -13,6 +14,17 @@ void main() {
       final store = FantaStore();
       final result = <String, dynamic>{};
       binding.reportData = result;
+      void phase(String value) => debugPrint('PH112_PHASE:$value');
+      void eventListener() {
+        if (store.diagnostics.entries.isNotEmpty) {
+          debugPrint(
+            'PH112_EVENT_JSON:${jsonEncode(store.diagnostics.entries.last)}',
+          );
+        }
+      }
+
+      store.diagnostics.addListener(eventListener);
+      phase('started');
       Future<void> waitFor(bool Function() ready, [int seconds = 50]) async {
         for (var i = 0; i < seconds && !ready(); i++) {
           await tester.pump(const Duration(seconds: 1));
@@ -20,18 +32,26 @@ void main() {
       }
 
       Future<Map<String, dynamic>> probe() async {
-        final raw = await store.controller?.evaluateJavascript(
-          source: r'''
+        try {
+          final raw = await store.controller
+              ?.evaluateJavascript(
+                source: r'''
         JSON.stringify((() => { const p=document.querySelector('input[type="password"]');
           const r=p?.getBoundingClientRect(); return {
             officialOrigin:location.origin==='https://leghe.fantacalcio.it',
             passwordVisible:!!r && r.width>0 && r.height>0,
             ready:document.readyState==='complete'}; })())
       ''',
-        );
-        return raw is String
-            ? Map<String, dynamic>.from(jsonDecode(raw) as Map)
-            : {};
+              )
+              .timeout(const Duration(seconds: 8));
+          return raw is String
+              ? Map<String, dynamic>.from(jsonDecode(raw) as Map)
+              : {};
+        } on TimeoutException {
+          return {'probeTimedOut': true};
+        } catch (_) {
+          return {'probeFailed': true};
+        }
       }
 
       try {
@@ -44,17 +64,22 @@ void main() {
             (e) => e['event'] == 'web_dom_ready' || e['event'] == 'web_timeout',
           ),
         );
+        phase('probing_initial_document');
         result['initialDocument'] = await probe();
+        phase('initial_document_probed');
         // Follow only the /login anchor actually supplied by the current home.
         // This opens no account and never submits the login form.
-        final followed = await store.controller?.evaluateJavascript(
-          source: r'''
+        final followed = await store.controller
+            ?.evaluateJavascript(
+              source: r'''
         (()=>{const a=Array.from(document.querySelectorAll('a[href]')).find(e=>{
           const u=new URL(e.href,location.href);return u.origin===location.origin && u.pathname==='/login';});
           if(!a)return false;a.click();return true;})()
       ''',
-        );
+            )
+            .timeout(const Duration(seconds: 8), onTimeout: () => false);
         result['existingLoginAnchorFollowed'] = followed == true;
+        phase('existing_link_followed');
         if (followed == true) {
           await waitFor(
             () =>
@@ -73,9 +98,10 @@ void main() {
         );
         await binding.takeScreenshot('iOS-1.1.2-login-link-result');
         // User-visible recovery invokes the existing modal trigger, not a guessed route.
+        phase('recovery_started');
         final recoveryStart = store.diagnostics.entries.length;
         await tester.tap(find.byTooltip('Menu PlantHead'));
-        await tester.pumpAndSettle(const Duration(milliseconds: 100));
+        await tester.pump(const Duration(milliseconds: 500));
         await tester.tap(find.text('Accesso dalla home ufficiale'));
         await tester.pump();
         await waitFor(
@@ -86,7 +112,9 @@ void main() {
           ),
           55,
         );
+        phase('probing_recovery_document');
         result['recoveredDocument'] = await probe();
+        phase('recovery_document_probed');
         result['recoveryHomeCommands'] = store.diagnostics.entries
             .skip(recoveryStart)
             .where(
@@ -127,6 +155,8 @@ void main() {
         );
         await tester.pumpWidget(const SizedBox.shrink());
         await tester.pump();
+        phase('finished');
+        store.diagnostics.removeListener(eventListener);
         store.dispose();
       }
     },

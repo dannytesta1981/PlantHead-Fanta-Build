@@ -48,28 +48,42 @@ jobs:
           shasum -a 256 PlantHead_Fanta-1.1.2-unsigned.ipa > SHA256.txt
       - name: Validate IPA contents
         run: python3 tool/verify_ipa.py build/feather/PlantHead_Fanta-1.1.2-unsigned.ipa > build/feather/VERIFICATION.json
+      - name: Compile simulator test app separately
+        id: sim_build
+        timeout-minutes: 10
+        shell: bash
+        run: |
+          flutter build ios --simulator --debug --no-pub --target=integration_test/ios_webview_test.dart
       - name: Real WKWebView regression on iPhone simulator
-        timeout-minutes: 18
+        timeout-minutes: 8
         shell: bash
         run: |
           set +e
           set -uo pipefail
           echo 'NOT_COMPLETED' > build/feather/WEBVIEW_RESULT.txt
           DEVICE=$(xcrun simctl list devices available -j | python3 -c 'import json,sys; d=json.load(sys.stdin); print(next(x["udid"] for group in d["devices"].values() for x in group if x["name"].startswith("iPhone")))')
+          echo "$DEVICE" > build/ios-simulator-device.txt
           xcrun simctl boot "$DEVICE" || true
           xcrun simctl bootstatus "$DEVICE" -b
           curl --fail --location --max-time 45 --output /dev/null --silent --show-error https://leghe.fantacalcio.it/
           NETWORK_STATUS=$?
           echo "RUNNER_HTTPS_EXIT=$NETWORK_STATUS" > build/feather/NETWORK_RESULT.txt
-          flutter drive --driver=test_driver/ios_webview_driver.dart --target=integration_test/ios_webview_test.dart -d "$DEVICE" --no-pub > build/ios-webview-driver.log 2>&1
+          flutter drive --driver=test_driver/ios_webview_driver.dart --target=integration_test/ios_webview_test.dart --use-application-binary=build/ios/iphonesimulator/Runner.app --timeout=240 -d "$DEVICE" --no-pub > build/ios-webview-driver.log 2>&1
           TEST_STATUS=$?
           echo "INTEGRATION_EXIT=$TEST_STATUS" > build/feather/WEBVIEW_RESULT.txt
-          xcrun simctl io "$DEVICE" screenshot build/feather/iOS-final-state.png || true
-          xcrun simctl spawn "$DEVICE" log show --last 15m --style json --predicate 'process == "Runner" OR process CONTAINS "WebKit"' > build/ios-webkit-system.json 2>/dev/null || true
-          python3 tool/summarize_webkit_logs.py build/ios-webkit-system.json > build/feather/WEBKIT_SUMMARY.json
-          # Never publish raw plugin, network or WebKit logs.
-          echo "WKWebView integration exit: $TEST_STATUS"
           exit "$TEST_STATUS"
+      - name: Collect safe iOS evidence even after driver failure
+        if: always()
+        shell: bash
+        run: |
+          mkdir -p build/feather
+          python3 tool/collect_ios_evidence.py build/ios-webview-driver.log > build/feather/DRIVER_EVIDENCE.json
+          if [ -f build/ios-simulator-device.txt ]; then
+            DEVICE=$(cat build/ios-simulator-device.txt)
+            xcrun simctl io "$DEVICE" screenshot build/feather/iOS-final-state.png || true
+            xcrun simctl spawn "$DEVICE" log show --last 15m --style json --predicate 'process == "Runner" OR process CONTAINS "WebKit"' > build/ios-webkit-system.json 2>/dev/null || true
+            python3 tool/summarize_webkit_logs.py build/ios-webkit-system.json > build/feather/WEBKIT_SUMMARY.json
+          fi
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -82,6 +96,7 @@ jobs:
             build/feather/WEBVIEW_RESULT.txt
             build/feather/NETWORK_RESULT.txt
             build/feather/WEBKIT_SUMMARY.json
+            build/feather/DRIVER_EVIDENCE.json
             build/feather/ios-webview-results.json
             build/feather/*.png
             ios/Podfile.lock
