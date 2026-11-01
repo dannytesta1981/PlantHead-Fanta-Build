@@ -30,44 +30,41 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          mkdir -p evidence
           sudo xcode-select -s /Applications/Xcode_16.4.app/Contents/Developer
           xcrun simctl list runtimes available | grep 'iOS 18.5'
-          mkdir -p evidence
           xcodebuild -version > evidence/environment.txt
-          echo 'Model=iPhone 16; runtime=iOS 18.5; erase before each; unauthenticated; no login click' >> evidence/environment.txt
+          echo 'Model=iPhone 16; runtime=iOS 18.5; erase and boot after both builds; unauthenticated; no login click; fixed 20s settling after boot; identical 360s driver deadline' >> evidence/environment.txt
           xcrun simctl create PHComparison com.apple.CoreSimulator.SimDeviceType.iPhone-16 com.apple.CoreSimulator.SimRuntime.iOS-18-5 > device-id.txt
+      - name: Build both observation targets before runtime tests
+        shell: bash
+        run: |
+          set +e
+          for VERSION in v114 v115; do
+            mkdir -p "evidence/$VERSION"
+            git -C "$VERSION" rev-parse HEAD > "evidence/$VERSION/commit.txt"
+            shasum -a 256 "$VERSION/lib/ui/fanta_home.dart" > "evidence/$VERSION/source-before.txt"
+            python3 harness/comparison/instrument.py "$VERSION" > "evidence/$VERSION/instrumentation.txt" || exit 1
+            python3 harness/comparison/run_bounded.py 720 "$VERSION-build.log" "evidence/$VERSION/build-status.json" "$VERSION" bash -c 'flutter config --no-analytics && flutter pub get --enforce-lockfile && flutter build ios --simulator --debug --no-pub --target=integration_test/comparison_test.dart'
+          done
       - name: Sequential identical home observations
         shell: bash
         run: |
           set +e
           DEVICE=$(cat device-id.txt)
           for VERSION in v114 v115; do
-            mkdir -p "evidence/$VERSION"
-            git -C "$VERSION" rev-parse HEAD > "evidence/$VERSION/commit.txt"
-            shasum -a 256 "$VERSION/lib/ui/fanta_home.dart" > "evidence/$VERSION/source-before.txt"
-            python3 harness/comparison/instrument.py "$VERSION" > "evidence/$VERSION/instrumentation.txt"
             xcrun simctl shutdown "$DEVICE" 2>/dev/null || true
             xcrun simctl erase "$DEVICE"
+            ERASE=$?
             xcrun simctl boot "$DEVICE"
+            BOOT=$?
             xcrun simctl bootstatus "$DEVICE" -b
-            (
-              cd "$VERSION"
-              flutter config --no-analytics
-              flutter pub get --enforce-lockfile
-              flutter build ios --simulator --debug --no-pub --target=integration_test/comparison_test.dart
-            ) > "$VERSION-build.log" 2>&1
-            BUILD=$?
-            echo "BUILD_EXIT=$BUILD" > "evidence/$VERSION/status.txt"
-            if [ "$BUILD" -eq 0 ]; then
-              (
-                cd "$VERSION"
-                flutter drive --driver=test_driver/comparison_driver.dart --target=integration_test/comparison_test.dart --use-application-binary=build/ios/iphonesimulator/Runner.app --timeout=180 -d "$DEVICE" --no-pub
-              ) > "$VERSION-driver.log" 2>&1 &
-              DRIVER=$!
-              ( sleep 240; kill "$DRIVER" 2>/dev/null ) & WATCHDOG=$!
-              wait "$DRIVER"; CODE=$?
-              kill "$WATCHDOG" 2>/dev/null || true
-              echo "DRIVER_EXIT=$CODE" >> "evidence/$VERSION/status.txt"
+            BOOTSTATUS=$?
+            echo "ERASE_EXIT=$ERASE; BOOT_EXIT=$BOOT; BOOTSTATUS_EXIT=$BOOTSTATUS" > "evidence/$VERSION/reset-status.txt"
+            if [ "$ERASE" -ne 0 ] || [ "$BOOT" -ne 0 ] || [ "$BOOTSTATUS" -ne 0 ]; then exit 1; fi
+            sleep 20
+            if [ -d "$VERSION/build/ios/iphonesimulator/Runner.app" ]; then
+              python3 harness/comparison/run_bounded.py 360 "$VERSION-driver.log" "evidence/$VERSION/driver-status.json" "$VERSION" flutter drive --verbose --driver=test_driver/comparison_driver.dart --target=integration_test/comparison_test.dart --use-application-binary=build/ios/iphonesimulator/Runner.app --timeout=180 -d "$DEVICE" --no-pub
             fi
             python3 harness/comparison/collect.py "$VERSION-driver.log" > "evidence/$VERSION/breadcrumbs.json"
             if [ -d "$VERSION/comparison-results" ]; then cp "$VERSION"/comparison-results/* "evidence/$VERSION/"; fi
@@ -75,7 +72,7 @@ jobs:
             xcrun simctl spawn "$DEVICE" log show --last 8m --style json --predicate 'process == "Runner" OR process CONTAINS "WebKit"' > "$VERSION-native.json" 2>/dev/null || true
             python3 harness/tool/summarize_webkit_logs.py "$VERSION-native.json" > "evidence/$VERSION/native-summary.json"
           done
-          python3 - <<'PY'
+          python3 - <<'PYTHON'
           import json
           from pathlib import Path
           out={}
@@ -85,7 +82,7 @@ jobs:
             out[version]={'samplesCollected':d['samplesCollected'],'driverLogPresent':d['driverLogPresent'],'observationComplete':d['samplesCollected']==12}
           Path('evidence/comparison.json').write_text(json.dumps(out,indent=2))
           assert all(x['observationComplete'] for x in out.values()), 'Incomplete evidence; not a comparative pass'
-          PY
+          PYTHON
       - uses: actions/upload-artifact@v4
         if: always()
         with:

@@ -1,8 +1,12 @@
+import 'dart:convert';
+import 'package:flutter/foundation.dart';
+
 class CompareObserver {
   static final clock = Stopwatch()..start();
   static final events = <Map<String, Object>>[];
   static void event(String category) {
     events.add({'ms':clock.elapsedMilliseconds,'event':category});
+    debugPrint('PHCMP:'+jsonEncode({'callbacks':[events.last]}));
   }
   static const script = r'''
   (()=>{
