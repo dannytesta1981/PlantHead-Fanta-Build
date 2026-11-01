@@ -1,0 +1,43 @@
+name: Verify deferred navigation scan (no IPA)
+on:
+  push:
+    branches:
+      - fix/defer-web-scans-until-content-ready
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  verify:
+    if: github.event.repository.private == false
+    runs-on: ubuntu-latest
+    timeout-minutes: 18
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify exact intended change
+        run: |
+          set -euo pipefail
+          git diff origin/main...HEAD -- lib/ui/fanta_home.dart
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('lib/ui/fanta_home.dart').read_text()
+          assert "if (!_load.contentReady || _scanning || _resetting || _web == null || _script == null) return;" in p
+          assert "if (_load.canProbe) unawaited(_verifyDocument());" in p
+          print("Deferred scan guard and independent content probe present")
+          PY
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Test all project JavaScript
+        run: |
+          cd tool
+          npm ci --no-audit --no-fund
+          node --test *.test.mjs
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.35.7'
+          cache: false
+      - name: Analyze and test Flutter
+        run: |
+          flutter pub get --enforce-lockfile
+          flutter analyze --no-pub
+          flutter test --no-pub
