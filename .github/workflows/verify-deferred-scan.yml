@@ -41,5 +41,6 @@ jobs:
       - name: Analyze and test Flutter
         run: |
           flutter pub get --enforce-lockfile
-          flutter analyze --no-pub
-          flutter test --no-pub
+          # comparison/ contains generated-only fixture imports, unavailable in normal builds.
+          flutter analyze --no-pub lib test integration_test
+          flutter test --no-pub test
