@@ -1,4 +1,4 @@
-name: Content readiness iOS preflight - no IPA
+name: Deterministic WKWebView preflight - no IPA
 on:
   workflow_dispatch:
 permissions:
@@ -9,89 +9,39 @@ concurrency:
 jobs:
   compare:
     runs-on: macos-15
-    timeout-minutes: 40
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
-        with:
-          path: harness
-      - uses: actions/checkout@v4
-        with:
-          ref: 8ec049e50e09c7dc00d4f4a9a89dfd3c831dcc5a
-          path: baseline
-      - uses: actions/checkout@v4
-        with:
-          path: fixed
       - uses: subosito/flutter-action@v2
         with:
           flutter-version: '3.35.7'
           cache: false
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-      - name: Existing Flutter and JavaScript tests on production sources
-        shell: bash
+      - name: Pin simulator and record unmodified sources
         run: |
           set -euo pipefail
           mkdir -p evidence
-          cd fixed
+          git rev-parse HEAD > evidence/commit.txt
+          shasum -a 256 lib/ui/fanta_home.dart lib/core/web_load_monitor.dart assets/official_access.js assets/content_readiness.js > evidence/production-hashes.txt
+          sudo xcode-select -s /Applications/Xcode_16.4.app/Contents/Developer
+          xcodebuild -version > evidence/environment.txt
+          echo 'iPhone 16 / iOS 18.5; erased fresh simulator; local HTTP fixture; no credentials; single official home attempt' >> evidence/environment.txt
+          xcrun simctl create PHDeterministic com.apple.CoreSimulator.SimDeviceType.iPhone-16 com.apple.CoreSimulator.SimRuntime.iOS-18-5 > device-id.txt
+          DEVICE=$(cat device-id.txt)
+          xcrun simctl boot "$DEVICE"
+          xcrun simctl bootstatus "$DEVICE" -b
+      - name: Instrument disposable simulator copy and compile
+        run: |
+          set -euo pipefail
+          python3 comparison/instrument_fixture.py
           flutter config --no-analytics
           flutter pub get --enforce-lockfile
-          flutter analyze --no-pub lib test integration_test test_driver > ../evidence/ANALYZE.txt 2>&1
-          flutter test --no-pub > ../evidence/FLUTTER_TESTS.txt 2>&1
-          (cd tool && npm ci && npm test) > ../evidence/JAVASCRIPT_TESTS.txt 2>&1
-      - name: Pin Xcode and simulator
-        shell: bash
-        run: |
-          set -euo pipefail
-          sudo xcode-select -s /Applications/Xcode_16.4.app/Contents/Developer
-          xcrun simctl list runtimes available | grep 'iOS 18.5'
-          xcodebuild -version > evidence/environment.txt
-          echo 'iPhone 16, iOS 18.5; one device erased before each; no credentials or login click; baseline-held / fixed-held suppress only the app loadStop delegate; fixed-natural forwards all callbacks; native screenshots at 45s and 90s; 24 DOM/UI samples' >> evidence/environment.txt
-          xcrun simctl create PHReadiness com.apple.CoreSimulator.SimDeviceType.iPhone-16 com.apple.CoreSimulator.SimRuntime.iOS-18-5 > device-id.txt
-      - name: Compile only simulator applications
-        shell: bash
-        run: |
-          set -euo pipefail
-          for VERSION in baseline fixed; do
-            mkdir -p "evidence/$VERSION-source"
-            git -C "$VERSION" rev-parse HEAD > "evidence/$VERSION-source/commit.txt"
-            shasum -a 256 "$VERSION/lib/ui/fanta_home.dart" > "evidence/$VERSION-source/before.txt"
-            python3 harness/comparison/instrument.py "$VERSION"
-            python3 harness/comparison/run_bounded.py 720 "$VERSION-build.log" "evidence/$VERSION-source/build-status.json" "$VERSION" bash -c 'flutter pub get --enforce-lockfile && flutter build ios --simulator --debug --no-pub --target=integration_test/comparison_test.dart'
-          done
-      - name: Controlled regression and natural WKWebView run
-        shell: bash
-        run: |
-          set -euo pipefail
-          DEVICE=$(cat device-id.txt)
-          observe() {
-            mkdir -p "evidence/$LABEL"
-            xcrun simctl shutdown "$DEVICE" 2>/dev/null || true
-            xcrun simctl erase "$DEVICE"
-            xcrun simctl boot "$DEVICE"
-            xcrun simctl bootstatus "$DEVICE" -b
-            echo 'ERASE_BOOT_SUCCESS' > "evidence/$LABEL/reset-status.txt"
-            sleep 20
-            python3 harness/comparison/run_console.py "$DEVICE" "$VERSION" "$LABEL" "$MODE"
-            python3 harness/comparison/collect.py "$LABEL-persisted.log" > "evidence/$LABEL/breadcrumbs.json"
-            xcrun simctl spawn "$DEVICE" log show --last 8m --style json --predicate 'process == "Runner" OR process CONTAINS "WebKit"' > "$LABEL-native.json" 2>/dev/null
-            python3 harness/tool/summarize_webkit_logs.py "$LABEL-native.json" > "evidence/$LABEL/native-summary.json"
-          }
-          for LABEL in baseline-held fixed-held fixed-natural; do
-            VERSION=fixed
-            MODE=held
-            if [ "$LABEL" = baseline-held ]; then VERSION=baseline; fi
-            if [ "$LABEL" = fixed-natural ]; then MODE=natural; fi
-            observe
-            if [ "$LABEL" = baseline-held ] && python3 harness/comparison/baseline_retry.py; then
-              mv evidence/baseline-held evidence/baseline-held-first-unavailable
-              observe
-            fi
-          done
-          python3 harness/comparison/check_improvement.py
+          flutter analyze --no-pub lib integration_test/runtime_fixture_test.dart > evidence/fixture-analysis.txt 2>&1
+          flutter build ios --simulator --debug --no-pub --target=integration_test/runtime_fixture_test.dart > evidence/simulator-build.log 2>&1
+      - name: Assert deterministic cases and observe official site once
+        run: python3 comparison/run_fixture.py
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: Content-readiness-preflight-no-IPA
+          name: Deterministic-WKWebView-evidence
           retention-days: 3
           path: evidence/
