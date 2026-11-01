@@ -34,7 +34,7 @@ jobs:
           sudo xcode-select -s /Applications/Xcode_16.4.app/Contents/Developer
           xcrun simctl list runtimes available | grep 'iOS 18.5'
           xcodebuild -version > evidence/environment.txt
-          echo 'Model=iPhone 16; runtime=iOS 18.5; erase and boot after both builds; unauthenticated; no login click; fixed 20s settling after boot; identical 140s direct simctl observation; screenshot at 45s; closed telemetry files recovered from Documents before termination' >> evidence/environment.txt
+          echo 'Model=iPhone 16; runtime=iOS 18.5; erase and boot after both builds; unauthenticated; no login click; fixed 20s settling after boot; identical 140s direct simctl observation; screenshot at 45s; closed telemetry files recovered from Documents before termination; install deadline 180s' >> evidence/environment.txt
           xcrun simctl create PHComparison com.apple.CoreSimulator.SimDeviceType.iPhone-16 com.apple.CoreSimulator.SimRuntime.iOS-18-5 > device-id.txt
       - name: Build both observation targets before runtime tests
         shell: bash
@@ -69,7 +69,8 @@ jobs:
             python3 harness/comparison/collect.py "$VERSION-persisted.log" > "evidence/$VERSION/breadcrumbs.json"
             if [ -d "$VERSION/comparison-results" ]; then cp "$VERSION"/comparison-results/* "evidence/$VERSION/"; fi
             xcrun simctl io "$DEVICE" screenshot "evidence/$VERSION/final.png" || true
-            xcrun simctl spawn "$DEVICE" log show --last 8m --style json --predicate 'process == "Runner" OR process CONTAINS "WebKit"' > "$VERSION-native.json" 2>/dev/null || true
+            xcrun simctl spawn "$DEVICE" log show --last 8m --style json --predicate 'process == "Runner" OR process CONTAINS "WebKit"' > "$VERSION-native.json" 2>/dev/null
+            echo "NATIVE_LOG_EXIT=$?" > "evidence/$VERSION/native-log-status.txt"
             python3 harness/tool/summarize_webkit_logs.py "$VERSION-native.json" > "evidence/$VERSION/native-summary.json"
           done
           python3 - <<'PYTHON'

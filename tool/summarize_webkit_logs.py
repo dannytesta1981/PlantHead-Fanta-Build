@@ -5,8 +5,10 @@ from pathlib import Path
 raw = Path(sys.argv[1]).read_text(errors='replace')
 try:
     events = json.loads(raw)
+    parsed = isinstance(events,list)
 except json.JSONDecodeError:
     events = []
+    parsed = False
 counts = Counter()
 for e in events if isinstance(events, list) else []:
     message = str(e.get('eventMessage', '')).lower()
@@ -26,5 +28,6 @@ for e in events if isinstance(events, list) else []:
     }.items():
         if signature in message:
             counts[key] += 1
-print(json.dumps({'parsedNativeEvents': len(events), 'categories': dict(counts),
+print(json.dumps({'sourceNonempty': bool(raw.strip()), 'parseSucceeded': parsed,
+                  'parsedNativeEvents': len(events), 'categories': dict(counts),
                   'rawMessagesExported': False}, indent=2))
