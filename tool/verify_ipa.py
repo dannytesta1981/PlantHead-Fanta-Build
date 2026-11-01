@@ -16,8 +16,8 @@ with zipfile.ZipFile(ipa) as z:
     plist=plistlib.loads(z.read(plists[0]))
     app=plists[0].removesuffix('Info.plist')
     assert plist['CFBundleIdentifier']=='it.planthead.fanta'
-    assert plist['CFBundleShortVersionString']=='1.1.8'
-    assert plist['CFBundleVersion']=='11'
+    assert plist['CFBundleShortVersionString']=='1.1.9'
+    assert plist['CFBundleVersion']=='12'
     assert plist['CFBundlePackageType']=='APPL'
     assert 'iPhoneOS' in plist['CFBundleSupportedPlatforms']
     binaries=[app+plist['CFBundleExecutable'],app+'Frameworks/App.framework/App',app+'Frameworks/Flutter.framework/Flutter']
