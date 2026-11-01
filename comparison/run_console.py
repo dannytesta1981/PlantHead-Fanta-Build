@@ -15,10 +15,12 @@ result = {'installExit': install.returncode, 'observationWindowSeconds': 300, 'n
 result['installTimeout'] = install.returncode == 124
 if install.returncode == 0:
     with logfile.open('w') as out:
-        child_env = dict(os.environ, SIMCTL_CHILD_PH_NATURAL_STOP='1' if mode == 'natural' else '0')
-        process = subprocess.Popen(['xcrun','simctl','launch','--console','--terminate-running-process',device,bundle],stdout=out,stderr=subprocess.STDOUT,start_new_session=True,env=child_env)
         container = bounded(['xcrun','simctl','get_app_container',device,bundle,'data'],text=True)
+        if container.returncode != 0: raise RuntimeError('test_container_unavailable')
         docs = Path(container.stdout.strip())/'Documents'
+        docs.mkdir(parents=True,exist_ok=True)
+        (docs/'ph-comparison-mode.txt').write_text(mode)
+        process = subprocess.Popen(['xcrun','simctl','launch','--console','--terminate-running-process',device,bundle],stdout=out,stderr=subprocess.STDOUT,start_new_session=True)
         start = time.monotonic()
         captured = set()
         while time.monotonic()-start < 300:

@@ -64,11 +64,7 @@ jobs:
         run: |
           set -euo pipefail
           DEVICE=$(cat device-id.txt)
-          for LABEL in baseline-held fixed-held fixed-natural; do
-            VERSION=fixed
-            MODE=held
-            if [ "$LABEL" = baseline-held ]; then VERSION=baseline; fi
-            if [ "$LABEL" = fixed-natural ]; then MODE=natural; fi
+          observe() {
             mkdir -p "evidence/$LABEL"
             xcrun simctl shutdown "$DEVICE" 2>/dev/null || true
             xcrun simctl erase "$DEVICE"
@@ -80,6 +76,17 @@ jobs:
             python3 harness/comparison/collect.py "$LABEL-persisted.log" > "evidence/$LABEL/breadcrumbs.json"
             xcrun simctl spawn "$DEVICE" log show --last 8m --style json --predicate 'process == "Runner" OR process CONTAINS "WebKit"' > "$LABEL-native.json" 2>/dev/null
             python3 harness/tool/summarize_webkit_logs.py "$LABEL-native.json" > "evidence/$LABEL/native-summary.json"
+          }
+          for LABEL in baseline-held fixed-held fixed-natural; do
+            VERSION=fixed
+            MODE=held
+            if [ "$LABEL" = baseline-held ]; then VERSION=baseline; fi
+            if [ "$LABEL" = fixed-natural ]; then MODE=natural; fi
+            observe
+            if [ "$LABEL" = baseline-held ] && python3 harness/comparison/baseline_retry.py; then
+              mv evidence/baseline-held evidence/baseline-held-first-unavailable
+              observe
+            fi
           done
           python3 harness/comparison/check_improvement.py
       - uses: actions/upload-artifact@v4

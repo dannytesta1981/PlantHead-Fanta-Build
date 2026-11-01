@@ -3,10 +3,12 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 
 class CompareObserver {
-  static bool get naturalStop => Platform.environment['PH_NATURAL_STOP'] == '1';
+  static bool naturalStop = false;
   static Directory? directory;
   static void prepare(Directory value) {
     directory = value;
+    final mode = File('${value.path}/ph-comparison-mode.txt');
+    naturalStop = mode.existsSync() && mode.readAsStringSync().trim() == 'natural';
     for (final name in ['ph-comparison-probes.log','ph-comparison-events.log']) {
       File('${value.path}/$name').writeAsStringSync('',flush:true);
     }

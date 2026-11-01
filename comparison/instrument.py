@@ -8,7 +8,7 @@ for needle,event in [("_trace.event('web_created');",'created'),("_trace.started
 stop = '_loadStopped = true;' if '_loadStopped = true;' in s else '_load.navigationStopped();'
 assert stop in s
 s=s.replace(stop,stop+" CompareObserver.event('stop');",1)
-s=s.replace("onLoadStop: (_, url) => _finished(url),", "onLoadStop: (_, url) { CompareObserver.event('stop_observed'); if (CompareObserver.naturalStop) { _finished(url); } else { CompareObserver.event('stop_withheld'); } },",1)
+s=s.replace("onLoadStop: (_, url) => _finished(url),", "onLoadStop: (_, url) async { CompareObserver.event('stop_observed'); if (CompareObserver.naturalStop) { await _finished(url); } else { CompareObserver.event('stop_withheld'); } },",1)
 if "widget.store.diagnostics.record('web_content_usable');" in s:
  s=s.replace("widget.store.diagnostics.record('web_content_usable');", "widget.store.diagnostics.record('web_content_usable'); CompareObserver.event('content_usable');",1)
 needle="onPageCommitVisible: (_, url) => _trace.event("
