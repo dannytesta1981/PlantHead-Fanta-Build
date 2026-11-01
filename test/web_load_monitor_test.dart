@@ -3,9 +3,23 @@ import 'package:planthead_fanta/core/web_load_monitor.dart';
 import 'package:planthead_fanta/data/diagnostics.dart';
 
 void main() {
+  test('new navigation cannot probe the previous committed document', () {
+    final m = WebLoadMonitor();
+    m.begin();
+    expect(m.canProbe, isFalse);
+    m.markCommitted();
+    expect(m.canProbe, isTrue);
+    m.begin();
+    expect(m.documentCommitted, isFalse);
+    expect(m.canProbe, isFalse);
+    m.markCommitted();
+    expect(m.canProbe, isTrue);
+    m.dispose();
+  });
   testWidgets('usable DOM recovers same navigation after timeout without loadStop', (t) async {
     final m = WebLoadMonitor(timeout: const Duration(seconds: 2));
     m.begin();
+    m.markCommitted();
     final generation = m.generation;
     await t.pump(const Duration(seconds: 2));
     expect(m.failure, 'timeout');

@@ -12,13 +12,21 @@ class WebLoadMonitor extends ChangeNotifier {
   bool busy = false;
   bool contentReady = false;
   bool navigationComplete = false;
+  bool documentCommitted = false;
   String? failure;
   VoidCallback? onTimeout;
 
-  bool get canProbe => !contentReady && (failure == null || failure == 'timeout');
+  bool get _acceptsContent => !contentReady && (failure == null || failure == 'timeout');
+  bool get canProbe => documentCommitted && _acceptsContent;
+
+  void markCommitted() {
+    documentCommitted = true;
+    notifyListeners();
+  }
 
   void navigationStopped() {
     navigationComplete = true;
+    documentCommitted = true;
     notifyListeners();
   }
 
@@ -34,6 +42,7 @@ class WebLoadMonitor extends ChangeNotifier {
     busy = true;
     contentReady = false;
     navigationComplete = false;
+    documentCommitted = false;
     failure = null;
     progress = 0;
     notifyListeners();
@@ -45,12 +54,13 @@ class WebLoadMonitor extends ChangeNotifier {
   }
 
   bool complete(int expectedGeneration, {required bool hasContent}) {
-    if (expectedGeneration != generation || !canProbe || !hasContent) {
+    if (expectedGeneration != generation || !_acceptsContent || !hasContent) {
       return false;
     }
     _timer?.cancel();
     busy = false;
     contentReady = true;
+    documentCommitted = true;
     failure = null;
     progress = 100;
     notifyListeners();

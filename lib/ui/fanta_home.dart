@@ -703,6 +703,7 @@ class OfficialWebPageState extends State<OfficialWebPage>
       onDidReceiveServerRedirectForProvisionalNavigation: (_) =>
           _trace.redirect(),
       onPageCommitVisible: (_, url) {
+        _load.markCommitted();
         _trace.event(
           'web_commit',
           uri: Uri.tryParse(url?.toString() ?? ''),
@@ -1216,6 +1217,7 @@ class _PopupPageState extends State<_PopupPage> {
             },
             onProgressChanged: (_, value) => _load.updateProgress(value),
             onLoadStop: (controller, url) async {
+              _load.navigationStopped();
               widget.trace.event(
                 'web_load_stop',
                 uri: Uri.tryParse(url?.toString() ?? ''),
