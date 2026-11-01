@@ -403,7 +403,10 @@ class OfficialWebPageState extends State<OfficialWebPage>
   }
 
   Future<void> _scan() async {
-    if (_scanning || _resetting || _web == null || _script == null) return;
+    // Do not inject navigation helpers or scrape the DOM while the official
+    // document is still loading. Readiness probing is the only JS operation
+    // allowed until the current navigation has usable content.
+    if (!_load.contentReady || _scanning || _resetting || _web == null || _script == null) return;
     _scanning = true;
     try {
       final controller = _web!;
