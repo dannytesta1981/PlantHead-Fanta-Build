@@ -851,6 +851,11 @@ class OfficialWebPageState extends State<OfficialWebPage>
           icon: const Icon(Icons.apps_rounded),
         ),
         IconButton(
+          tooltip: 'Apri Leghe Fantacalcio in Safari',
+          onPressed: () => unawaited(_openExternal(NavigationPolicy.home)),
+          icon: const Icon(Icons.open_in_browser_rounded),
+        ),
+        IconButton(
           tooltip: 'Aggiorna pagina',
           onPressed: _ready ? _reload : null,
           icon: const Icon(Icons.refresh_rounded),
@@ -922,6 +927,12 @@ class OfficialWebPageState extends State<OfficialWebPage>
                             const SizedBox(width: 12),
                             const Expanded(
                               child: Text('Caricamento del sito ufficiale…'),
+                            ),
+                            TextButton(
+                              onPressed: () => unawaited(
+                                _openExternal(NavigationPolicy.home),
+                              ),
+                              child: const Text('Safari'),
                             ),
                             TextButton(
                               onPressed: _reload,
