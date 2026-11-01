@@ -1,0 +1,84 @@
+name: Verify deferred navigation scan (no IPA)
+on:
+  push:
+    branches:
+      - fix/defer-web-scans-until-content-ready
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  verify:
+    if: github.event.repository.private == false
+    runs-on: ubuntu-latest
+    timeout-minutes: 18
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Verify exact intended change
+        run: |
+          set -euo pipefail
+          git diff origin/main...HEAD -- lib/ui/fanta_home.dart
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('lib/ui/fanta_home.dart').read_text()
+          assert "if (!_load.contentReady || _scanning || _resetting || _web == null || _script == null) return;" in p
+          assert "if (_load.canProbe) unawaited(_verifyDocument());" in p
+          print("Deferred scan guard and independent content probe present")
+          PY
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Test all project JavaScript
+        run: |
+          cd tool
+          npm ci --no-audit --no-fund
+          node --test *.test.mjs
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.35.7'
+          cache: false
+      - name: Analyze and test Flutter
+        run: |
+          flutter pub get --enforce-lockfile
+          # comparison/ contains generated-only fixture imports, unavailable in normal builds.
+          flutter analyze --no-pub lib test integration_test
+          flutter test --no-pub test
+  ios:
+    needs: verify
+    if: github.event.repository.private == false
+    runs-on: macos-15
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.35.7'
+          cache: false
+      - name: Compile single unsigned ARM64 iOS candidate
+        run: |
+          set -euo pipefail
+          sudo xcode-select -s /Applications/Xcode_16.4.app/Contents/Developer
+          flutter config --no-analytics
+          flutter pub get --enforce-lockfile
+          flutter build ios --release --no-codesign --no-pub --build-name=1.1.8 --build-number=11
+      - name: Package verify and fingerprint candidate
+        run: |
+          set -euo pipefail
+          plutil -lint build/ios/iphoneos/Runner.app/Info.plist
+          xcrun lipo build/ios/iphoneos/Runner.app/Runner -verify_arch arm64
+          mkdir -p build/feather/Payload
+          cp -R build/ios/iphoneos/Runner.app build/feather/Payload/
+          (cd build/feather && /usr/bin/ditto -c -k --keepParent Payload PlantHead-Fanta-1.1.8-build11-unsigned-CANDIDATE.ipa)
+          python3 tool/verify_ipa.py build/feather/PlantHead-Fanta-1.1.8-build11-unsigned-CANDIDATE.ipa > build/feather/VERIFICATION.json
+          shasum -a 256 build/feather/*.ipa > build/feather/SHA256.txt
+          git rev-parse HEAD > build/feather/SOURCE_COMMIT.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: PlantHead-Fanta-1.1.8-build11-unsigned-CANDIDATE
+          retention-days: 7
+          path: |
+            build/feather/*.ipa
+            build/feather/SHA256.txt
+            build/feather/VERIFICATION.json
+            build/feather/SOURCE_COMMIT.txt
