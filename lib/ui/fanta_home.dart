@@ -43,6 +43,8 @@ class OfficialWebPageState extends State<OfficialWebPage>
   int? _httpStatus;
   bool _accessAfterHome = false;
   bool _probing = false;
+  int? _reportedEmptyGeneration;
+  int? _reportedProbeErrorGeneration;
   String? _script;
   String? _contentProbe;
   Set<String> _available = {};
@@ -179,7 +181,10 @@ class OfficialWebPageState extends State<OfficialWebPage>
       );
       if (!mounted || c != _web || generation != _load.generation) return;
       final ok = visible == true;
-      widget.store.diagnostics.record(ok ? 'web_dom_ready' : 'web_dom_empty');
+      if (ok || _reportedEmptyGeneration != generation) {
+        widget.store.diagnostics.record(ok ? 'web_dom_ready' : 'web_dom_empty');
+        if (!ok) _reportedEmptyGeneration = generation;
+      }
       if (_load.complete(generation, hasContent: ok)) {
         widget.store.diagnostics.record('web_content_usable');
         widget.store.pageFinished();
@@ -191,7 +196,11 @@ class OfficialWebPageState extends State<OfficialWebPage>
         }
       }
     } catch (_) {
-      widget.store.diagnostics.record('web_probe_error');
+      if (mounted && c == _web && generation == _load.generation &&
+          _reportedProbeErrorGeneration != generation) {
+        _reportedProbeErrorGeneration = generation;
+        widget.store.diagnostics.record('web_probe_error');
+      }
     } finally {
       _probing = false;
     }
