@@ -34,7 +34,7 @@ jobs:
           sudo xcode-select -s /Applications/Xcode_16.4.app/Contents/Developer
           xcrun simctl list runtimes available | grep 'iOS 18.5'
           xcodebuild -version > evidence/environment.txt
-          echo 'Model=iPhone 16; runtime=iOS 18.5; erase and boot after both builds; unauthenticated; no login click; fixed 20s settling after boot; identical 360s driver deadline' >> evidence/environment.txt
+          echo 'Model=iPhone 16; runtime=iOS 18.5; erase and boot after both builds; unauthenticated; no login click; fixed 20s settling after boot; identical 90s direct simctl console observation; screenshot at 45s' >> evidence/environment.txt
           xcrun simctl create PHComparison com.apple.CoreSimulator.SimDeviceType.iPhone-16 com.apple.CoreSimulator.SimRuntime.iOS-18-5 > device-id.txt
       - name: Build both observation targets before runtime tests
         shell: bash
@@ -64,7 +64,7 @@ jobs:
             if [ "$ERASE" -ne 0 ] || [ "$BOOT" -ne 0 ] || [ "$BOOTSTATUS" -ne 0 ]; then exit 1; fi
             sleep 20
             if [ -d "$VERSION/build/ios/iphonesimulator/Runner.app" ]; then
-              python3 harness/comparison/run_bounded.py 360 "$VERSION-driver.log" "evidence/$VERSION/driver-status.json" "$VERSION" flutter drive --verbose --driver=test_driver/comparison_driver.dart --target=integration_test/comparison_test.dart --use-application-binary=build/ios/iphonesimulator/Runner.app --timeout=180 -d "$DEVICE" --no-pub
+              python3 harness/comparison/run_console.py "$DEVICE" "$VERSION"
             fi
             python3 harness/comparison/collect.py "$VERSION-driver.log" > "evidence/$VERSION/breadcrumbs.json"
             if [ -d "$VERSION/comparison-results" ]; then cp "$VERSION"/comparison-results/* "evidence/$VERSION/"; fi
