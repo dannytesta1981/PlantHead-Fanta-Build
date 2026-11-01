@@ -42,9 +42,9 @@ class OfficialWebPageState extends State<OfficialWebPage>
   late final NavigationTrace _trace;
   int? _httpStatus;
   bool _accessAfterHome = false;
-  bool _loadStopped = false;
   bool _probing = false;
   String? _script;
+  String? _contentProbe;
   Set<String> _available = {};
   Uri? _uri = NavigationPolicy.home;
   String? _error;
@@ -79,7 +79,7 @@ class OfficialWebPageState extends State<OfficialWebPage>
     unawaited(_prepare());
     _scanTimer = Timer.periodic(const Duration(seconds: 2), (_) {
       unawaited(_scan());
-      if (_loadStopped && _load.busy) unawaited(_verifyDocument());
+      if (_load.canProbe) unawaited(_verifyDocument());
     });
   }
 
@@ -87,6 +87,7 @@ class OfficialWebPageState extends State<OfficialWebPage>
     _load.begin(restart: true);
     try {
       _script = await rootBundle.loadString('assets/navigation.js');
+      _contentProbe = await rootBundle.loadString('assets/content_readiness.js');
       final prefs = await SharedPreferences.getInstance();
       if (!mounted) return;
       setState(() {
@@ -111,7 +112,7 @@ class OfficialWebPageState extends State<OfficialWebPage>
     if (state == AppLifecycleState.resumed) {
       _scanTimer = Timer.periodic(const Duration(seconds: 2), (_) {
         unawaited(_scan());
-        if (_loadStopped && _load.busy) unawaited(_verifyDocument());
+        if (_load.canProbe) unawaited(_verifyDocument());
       });
       unawaited(_scan());
     }
@@ -137,7 +138,7 @@ class OfficialWebPageState extends State<OfficialWebPage>
       widget.store.diagnostics.record(
         widget.visible ? 'web_visible' : 'web_hidden',
       );
-      if (widget.visible && _loadStopped && _load.busy) {
+      if (widget.visible && _load.canProbe) {
         WidgetsBinding.instance.addPostFrameCallback((_) => _verifyDocument());
       }
     }
@@ -150,7 +151,7 @@ class OfficialWebPageState extends State<OfficialWebPage>
       _error = switch (_load.failure) {
         null => null,
         'timeout' =>
-          'Caricamento non completato entro 35 secondi. Controlla la rete e premi Riprova.',
+          'Il contenuto non è diventato utilizzabile entro 35 secondi. Puoi attendere ancora o premere Riprova.',
         'webkit' =>
           'Il contenuto web è stato interrotto da iOS. Premi Riprova per ricrearlo.',
         'http' =>
@@ -165,25 +166,22 @@ class OfficialWebPageState extends State<OfficialWebPage>
 
   Future<void> _verifyDocument() async {
     final c = _web;
-    if (c == null || _probing || !_load.busy || !_loadStopped) return;
+    if (c == null || !widget.visible || _probing || !_load.canProbe) return;
     _probing = true;
     final generation = _load.generation;
     try {
-      // Read only: no input values, text or URLs leave WKWebView.
-      final visible = await c.evaluateJavascript(
-        source: r"""
-        (() => {const b=document.body;
-          if(!b || document.readyState==='loading') return false;
-          const r=b.getBoundingClientRect();
-          return r.width>0 && r.height>0 &&
-            (!!b.innerText.trim() || !!b.querySelector('input,button,img,canvas,video,iframe'));
-        })()
-      """,
+      // Only a boolean leaves the document. No field values, HTML or URLs.
+      final source = _contentProbe ??= await rootBundle.loadString(
+        'assets/content_readiness.js',
+      );
+      final visible = await c.evaluateJavascript(source: source).timeout(
+        const Duration(seconds: 3),
       );
       if (!mounted || c != _web || generation != _load.generation) return;
       final ok = visible == true;
       widget.store.diagnostics.record(ok ? 'web_dom_ready' : 'web_dom_empty');
       if (_load.complete(generation, hasContent: ok)) {
+        widget.store.diagnostics.record('web_content_usable');
         widget.store.pageFinished();
         await _refresh?.endRefreshing();
         await _scan();
@@ -476,7 +474,6 @@ class OfficialWebPageState extends State<OfficialWebPage>
       destination: recreate ? NavigationPolicy.home : _uri,
     );
     _httpStatus = null;
-    _loadStopped = false;
     _load.begin(restart: true);
     if (recreate) {
       widget.store.controller = null;
@@ -501,7 +498,6 @@ class OfficialWebPageState extends State<OfficialWebPage>
       await _reload();
       return;
     }
-    _loadStopped = false;
     _load.begin(restart: true);
     try {
       await _web!.loadUrl(
@@ -514,7 +510,6 @@ class OfficialWebPageState extends State<OfficialWebPage>
 
   void _started() {
     _httpStatus = null;
-    _loadStopped = false;
     widget.store.pageStarted();
     _load.begin();
     setState(() {
@@ -528,7 +523,7 @@ class OfficialWebPageState extends State<OfficialWebPage>
       uri: Uri.tryParse(url?.toString() ?? ''),
       mainFrame: true,
     );
-    _loadStopped = true;
+    _load.navigationStopped();
     // A cancelled TLS handshake or an empty document is not a loaded page.
     await _verifyDocument();
   }
@@ -707,11 +702,14 @@ class OfficialWebPageState extends State<OfficialWebPage>
       onLoadStop: (_, url) => _finished(url),
       onDidReceiveServerRedirectForProvisionalNavigation: (_) =>
           _trace.redirect(),
-      onPageCommitVisible: (_, url) => _trace.event(
-        'web_commit',
-        uri: Uri.tryParse(url?.toString() ?? ''),
-        mainFrame: true,
-      ),
+      onPageCommitVisible: (_, url) {
+        _trace.event(
+          'web_commit',
+          uri: Uri.tryParse(url?.toString() ?? ''),
+          mainFrame: true,
+        );
+        unawaited(_verifyDocument());
+      },
       onProgressChanged: (_, value) {
         if (mounted) _load.updateProgress(value);
       },

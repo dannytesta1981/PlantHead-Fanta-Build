@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 
 class CompareObserver {
+  static bool get naturalStop => Platform.environment['PH_NATURAL_STOP'] == '1';
   static Directory? directory;
   static void prepare(Directory value) {
     directory = value;

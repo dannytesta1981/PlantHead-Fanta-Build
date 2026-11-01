@@ -10,12 +10,21 @@ class WebLoadMonitor extends ChangeNotifier {
   int generation = 0;
   int progress = 0;
   bool busy = false;
+  bool contentReady = false;
+  bool navigationComplete = false;
   String? failure;
   VoidCallback? onTimeout;
 
+  bool get canProbe => !contentReady && (failure == null || failure == 'timeout');
+
+  void navigationStopped() {
+    navigationComplete = true;
+    notifyListeners();
+  }
+
   void begin({bool restart = false}) {
+    generation++; // Reject probes issued before a new document/redirect.
     if (restart || !busy) {
-      generation++;
       _timer?.cancel();
       _timer = Timer(timeout, () {
         fail('timeout');
@@ -23,6 +32,8 @@ class WebLoadMonitor extends ChangeNotifier {
       });
     }
     busy = true;
+    contentReady = false;
+    navigationComplete = false;
     failure = null;
     progress = 0;
     notifyListeners();
@@ -34,11 +45,13 @@ class WebLoadMonitor extends ChangeNotifier {
   }
 
   bool complete(int expectedGeneration, {required bool hasContent}) {
-    if (expectedGeneration != generation || failure != null || !hasContent) {
+    if (expectedGeneration != generation || !canProbe || !hasContent) {
       return false;
     }
     _timer?.cancel();
     busy = false;
+    contentReady = true;
+    failure = null;
     progress = 100;
     notifyListeners();
     return true;
@@ -46,8 +59,11 @@ class WebLoadMonitor extends ChangeNotifier {
 
   void fail(String category) {
     _timer?.cancel();
-    generation++; // Ignore late DOM probes from a failed document.
+    // Timeout is recoverable by usable content from this SAME document.
+    // Hard errors invalidate in-flight probes and require a new navigation.
+    if (category != 'timeout') generation++;
     busy = false;
+    contentReady = false;
     failure = category;
     notifyListeners();
   }

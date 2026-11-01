@@ -29,6 +29,7 @@ class Diagnostics extends ChangeNotifier {
     'web_http_error',
     'web_timeout',
     'web_dom_ready',
+    'web_content_usable',
     'web_dom_empty',
     'web_probe_error',
     'web_process_terminated',
@@ -170,7 +171,7 @@ class Diagnostics extends ChangeNotifier {
   String export({required String session, required Map<String, int> counts}) =>
       const JsonEncoder.withIndent('  ').convert({
         'app': 'PlantHead Fanta',
-        'version': '1.1.5+8',
+        'version': '1.1.6+9',
         'adapter': 'ph-dom/1',
         'platform': Platform.operatingSystem,
         'session':

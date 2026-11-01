@@ -1,7 +1,7 @@
 import json,sys
 from pathlib import Path
-keys=set('phase sample samples callbacks ms event commitSeen ready bodyPresent bodySized bodyHasContent resourceCompleted resourceHttpFailure resourceStatusUnknown counters jsErrors unhandledRejections resourceErrors scriptErrors styleErrors imageErrors probe'.split())
-values=set('started finished created start stop dom_probe timeout commit main_error subframe_error main_http_error subframe_http_error terminated loading interactive complete unknown no_result failed_or_timeout'.split())
+keys=set('renderable webPageVisible errorOverlayVisible loadingOverlayVisible naturalStop phase sample samples callbacks ms event commitSeen ready bodyPresent bodySized bodyHasContent resourceCompleted resourceHttpFailure resourceStatusUnknown counters jsErrors unhandledRejections resourceErrors scriptErrors styleErrors imageErrors probe'.split())
+values=set('started finished created start stop stop_observed stop_withheld content_usable dom_probe timeout commit main_error subframe_error main_http_error subframe_http_error terminated loading interactive complete unknown no_result failed_or_timeout'.split())
 def clean(x):
  if isinstance(x,dict):return {k:clean(v) for k,v in x.items() if k in keys}
  if isinstance(x,list):return [clean(v) for v in x[:500]]

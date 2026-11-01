@@ -1,11 +1,17 @@
-name: iOS 1.1.5 build 8 — manual unsigned
+name: iOS 1.1.6 build 9 - unsigned after verified preflight
 on:
   workflow_dispatch:
+    inputs:
+      preflight_run_id:
+        description: Successful content-readiness preflight on this exact commit
+        required: true
+        type: string
+permissions:
+  contents: read
+  actions: read
 concurrency:
   group: ios-manual-build
   cancel-in-progress: false
-permissions:
-  contents: read
 jobs:
   ios:
     if: github.event.repository.private == false
@@ -13,91 +19,58 @@ jobs:
     timeout-minutes: 35
     steps:
       - uses: actions/checkout@v4
+      - name: Require successful runtime preflight on exact source commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PREFLIGHT_ID: ${{ inputs.preflight_run_id }}
+        run: |
+          set -euo pipefail
+          [[ "$PREFLIGHT_ID" =~ ^[0-9]+$ ]]
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$PREFLIGHT_ID" > /tmp/preflight.json
+          python3 - <<'PY'
+          import json,os
+          from pathlib import Path
+          r=json.loads(Path('/tmp/preflight.json').read_text())
+          assert r['conclusion']=='success'
+          assert r['head_sha']==os.environ['GITHUB_SHA']
+          assert r['path']=='.github/workflows/compare-ios.yml'
+          PY
       - uses: subosito/flutter-action@v2
         with:
           flutter-version: '3.35.7'
           cache: false
-      - run: flutter config --no-analytics
-      - run: flutter pub get --enforce-lockfile
-      - run: dart format lib test integration_test test_driver
-      - run: flutter analyze --no-pub
-      - run: flutter test --no-pub
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-      - run: npm ci && npm test
-        working-directory: tool
-      - name: Compile physical iOS device app without signing
-        run: flutter build ios --release --no-codesign --no-pub --build-name=1.1.5 --build-number=8
-      - name: Package actual app for external signing
-        shell: bash
+      - name: Build physical iOS ARM64 release once without Apple signing
         run: |
           set -euo pipefail
-          test -d build/ios/iphoneos/Runner.app
+          sudo xcode-select -s /Applications/Xcode_16.4.app/Contents/Developer
+          flutter config --no-analytics
+          flutter pub get --enforce-lockfile
+          flutter build ios --release --no-codesign --no-pub --build-name=1.1.6 --build-number=9
+      - name: Package and verify IPA for Feather
+        env:
+          PREFLIGHT_ID: ${{ inputs.preflight_run_id }}
+        run: |
+          set -euo pipefail
           plutil -lint build/ios/iphoneos/Runner.app/Info.plist
-          EXECUTABLE=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' build/ios/iphoneos/Runner.app/Info.plist)
-          test -x "build/ios/iphoneos/Runner.app/$EXECUTABLE"
-          xcrun lipo "build/ios/iphoneos/Runner.app/$EXECUTABLE" -verify_arch arm64
-          file "build/ios/iphoneos/Runner.app/$EXECUTABLE"
-          /usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' build/ios/iphoneos/Runner.app/Info.plist
+          xcrun lipo build/ios/iphoneos/Runner.app/Runner -verify_arch arm64
           mkdir -p build/feather/Payload
           cp -R build/ios/iphoneos/Runner.app build/feather/Payload/
-          cd build/feather
-          /usr/bin/ditto -c -k --keepParent Payload PlantHead_Fanta-1.1.5-unsigned.ipa
-          unzip -t PlantHead_Fanta-1.1.5-unsigned.ipa
-          shasum -a 256 PlantHead_Fanta-1.1.5-unsigned.ipa > SHA256.txt
-      - name: Validate IPA contents
-        run: python3 tool/verify_ipa.py build/feather/PlantHead_Fanta-1.1.5-unsigned.ipa > build/feather/VERIFICATION.json
-      - name: Compile simulator test app separately
-        id: sim_build
-        timeout-minutes: 10
-        shell: bash
-        run: |
-          flutter build ios --simulator --debug --no-pub --target=integration_test/ios_webview_test.dart
-      - name: Real WKWebView regression on iPhone simulator
-        timeout-minutes: 8
-        shell: bash
-        run: |
-          set +e
-          set -uo pipefail
-          echo 'NOT_COMPLETED' > build/feather/WEBVIEW_RESULT.txt
-          DEVICE=$(xcrun simctl list devices available -j | python3 -c 'import json,sys; d=json.load(sys.stdin); print(next(x["udid"] for group in d["devices"].values() for x in group if x["name"].startswith("iPhone")))')
-          echo "$DEVICE" > build/ios-simulator-device.txt
-          xcrun simctl boot "$DEVICE" || true
-          xcrun simctl bootstatus "$DEVICE" -b
-          curl --fail --location --max-time 45 --output /dev/null --silent --show-error https://leghe.fantacalcio.it/
-          NETWORK_STATUS=$?
-          echo "RUNNER_HTTPS_EXIT=$NETWORK_STATUS" > build/feather/NETWORK_RESULT.txt
-          flutter drive --driver=test_driver/ios_webview_driver.dart --target=integration_test/ios_webview_test.dart --use-application-binary=build/ios/iphonesimulator/Runner.app --timeout=240 -d "$DEVICE" --no-pub > build/ios-webview-driver.log 2>&1
-          TEST_STATUS=$?
-          echo "INTEGRATION_EXIT=$TEST_STATUS" > build/feather/WEBVIEW_RESULT.txt
-          exit "$TEST_STATUS"
-      - name: Collect safe iOS evidence even after driver failure
-        if: always()
-        shell: bash
-        run: |
-          mkdir -p build/feather
-          python3 tool/collect_ios_evidence.py build/ios-webview-driver.log > build/feather/DRIVER_EVIDENCE.json
-          if [ -f build/ios-simulator-device.txt ]; then
-            DEVICE=$(cat build/ios-simulator-device.txt)
-            xcrun simctl io "$DEVICE" screenshot build/feather/iOS-final-state.png || true
-            xcrun simctl spawn "$DEVICE" log show --last 15m --style json --predicate 'process == "Runner" OR process CONTAINS "WebKit"' > build/ios-webkit-system.json 2>/dev/null || true
-            python3 tool/summarize_webkit_logs.py build/ios-webkit-system.json > build/feather/WEBKIT_SUMMARY.json
-          fi
+          (cd build/feather && /usr/bin/ditto -c -k --keepParent Payload PlantHead_Fanta-1.1.6-build9-unsigned.ipa)
+          python3 tool/verify_ipa.py build/feather/PlantHead_Fanta-1.1.6-build9-unsigned.ipa > build/feather/VERIFICATION.json
+          shasum -a 256 build/feather/*.ipa > build/feather/SHA256.txt
+          python3 - <<'PY'
+          import json,os,hashlib
+          from pathlib import Path
+          paths=['lib/ui/fanta_home.dart','lib/core/web_load_monitor.dart','assets/content_readiness.js','assets/official_access.js']
+          data={'commit':os.environ['GITHUB_SHA'],'preflightRun':os.environ['PREFLIGHT_ID'],'version':'1.1.6','build':9,'sourceHashes':{p:hashlib.sha256(Path(p).read_bytes()).hexdigest() for p in paths}}
+          Path('build/feather/SOURCE.json').write_text(json.dumps(data,indent=2))
+          PY
       - uses: actions/upload-artifact@v4
-        if: always()
         with:
-          name: PlantHead-Fanta-1.1.5-build8-unsigned-Feather
+          name: PlantHead-Fanta-1.1.6-build9-unsigned-Feather
           retention-days: 3
           path: |
             build/feather/*.ipa
             build/feather/SHA256.txt
             build/feather/VERIFICATION.json
-            build/feather/WEBVIEW_RESULT.txt
-            build/feather/NETWORK_RESULT.txt
-            build/feather/WEBKIT_SUMMARY.json
-            build/feather/DRIVER_EVIDENCE.json
-            build/feather/ios-webview-results.json
-            build/feather/*.png
-            ios/Podfile.lock
-          if-no-files-found: error
+            build/feather/SOURCE.json

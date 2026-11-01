@@ -1,4 +1,4 @@
-name: Temporary iOS home comparison - no release
+name: Content readiness iOS preflight - no IPA
 on:
   workflow_dispatch:
 permissions:
@@ -16,77 +16,75 @@ jobs:
           path: harness
       - uses: actions/checkout@v4
         with:
-          ref: ee32b70e3b2afe56cb51751d848057b36c309569
-          path: v114
+          ref: 8ec049e50e09c7dc00d4f4a9a89dfd3c831dcc5a
+          path: baseline
       - uses: actions/checkout@v4
         with:
-          ref: 8ec049e50e09c7dc00d4f4a9a89dfd3c831dcc5a
-          path: v115
+          path: fixed
       - uses: subosito/flutter-action@v2
         with:
           flutter-version: '3.35.7'
           cache: false
-      - name: Pin Xcode and simulator
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Existing Flutter and JavaScript tests on production sources
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p evidence
+          cd fixed
+          flutter config --no-analytics
+          flutter pub get --enforce-lockfile
+          flutter analyze --no-pub lib test integration_test test_driver > ../evidence/ANALYZE.txt 2>&1
+          flutter test --no-pub > ../evidence/FLUTTER_TESTS.txt 2>&1
+          (cd tool && npm ci && npm test) > ../evidence/JAVASCRIPT_TESTS.txt 2>&1
+      - name: Pin Xcode and simulator
+        shell: bash
+        run: |
+          set -euo pipefail
           sudo xcode-select -s /Applications/Xcode_16.4.app/Contents/Developer
           xcrun simctl list runtimes available | grep 'iOS 18.5'
           xcodebuild -version > evidence/environment.txt
-          echo 'Model=iPhone 16; runtime=iOS 18.5; erase and boot after both builds; unauthenticated; no login click; fixed 20s settling after boot; identical 140s direct simctl observation; screenshot at 45s; closed telemetry files recovered from Documents before termination; install deadline 180s' >> evidence/environment.txt
-          xcrun simctl create PHComparison com.apple.CoreSimulator.SimDeviceType.iPhone-16 com.apple.CoreSimulator.SimRuntime.iOS-18-5 > device-id.txt
-      - name: Build both observation targets before runtime tests
+          echo 'iPhone 16, iOS 18.5; one device erased before each; no credentials or login click; baseline-held / fixed-held suppress only the app loadStop delegate; fixed-natural forwards all callbacks; native screenshots at 45s and 90s; 24 DOM/UI samples' >> evidence/environment.txt
+          xcrun simctl create PHReadiness com.apple.CoreSimulator.SimDeviceType.iPhone-16 com.apple.CoreSimulator.SimRuntime.iOS-18-5 > device-id.txt
+      - name: Compile only simulator applications
         shell: bash
         run: |
-          set +e
-          for VERSION in v114 v115; do
-            mkdir -p "evidence/$VERSION"
-            git -C "$VERSION" rev-parse HEAD > "evidence/$VERSION/commit.txt"
-            shasum -a 256 "$VERSION/lib/ui/fanta_home.dart" > "evidence/$VERSION/source-before.txt"
-            python3 harness/comparison/instrument.py "$VERSION" > "evidence/$VERSION/instrumentation.txt" || exit 1
-            python3 harness/comparison/run_bounded.py 720 "$VERSION-build.log" "evidence/$VERSION/build-status.json" "$VERSION" bash -c 'flutter config --no-analytics && flutter pub get --enforce-lockfile && flutter build ios --simulator --debug --no-pub --target=integration_test/comparison_test.dart'
+          set -euo pipefail
+          for VERSION in baseline fixed; do
+            mkdir -p "evidence/$VERSION-source"
+            git -C "$VERSION" rev-parse HEAD > "evidence/$VERSION-source/commit.txt"
+            shasum -a 256 "$VERSION/lib/ui/fanta_home.dart" > "evidence/$VERSION-source/before.txt"
+            python3 harness/comparison/instrument.py "$VERSION"
+            python3 harness/comparison/run_bounded.py 720 "$VERSION-build.log" "evidence/$VERSION-source/build-status.json" "$VERSION" bash -c 'flutter pub get --enforce-lockfile && flutter build ios --simulator --debug --no-pub --target=integration_test/comparison_test.dart'
           done
-      - name: Sequential identical home observations
+      - name: Controlled regression and natural WKWebView run
         shell: bash
         run: |
-          set +e
+          set -euo pipefail
           DEVICE=$(cat device-id.txt)
-          for VERSION in v114 v115; do
+          for LABEL in baseline-held fixed-held fixed-natural; do
+            VERSION=fixed
+            MODE=held
+            if [ "$LABEL" = baseline-held ]; then VERSION=baseline; fi
+            if [ "$LABEL" = fixed-natural ]; then MODE=natural; fi
+            mkdir -p "evidence/$LABEL"
             xcrun simctl shutdown "$DEVICE" 2>/dev/null || true
             xcrun simctl erase "$DEVICE"
-            ERASE=$?
             xcrun simctl boot "$DEVICE"
-            BOOT=$?
             xcrun simctl bootstatus "$DEVICE" -b
-            BOOTSTATUS=$?
-            echo "ERASE_EXIT=$ERASE; BOOT_EXIT=$BOOT; BOOTSTATUS_EXIT=$BOOTSTATUS" > "evidence/$VERSION/reset-status.txt"
-            if [ "$ERASE" -ne 0 ] || [ "$BOOT" -ne 0 ] || [ "$BOOTSTATUS" -ne 0 ]; then exit 1; fi
+            echo 'ERASE_BOOT_SUCCESS' > "evidence/$LABEL/reset-status.txt"
             sleep 20
-            if [ -d "$VERSION/build/ios/iphonesimulator/Runner.app" ]; then
-              python3 harness/comparison/run_console.py "$DEVICE" "$VERSION"
-            fi
-            python3 harness/comparison/collect.py "$VERSION-persisted.log" > "evidence/$VERSION/breadcrumbs.json"
-            if [ -d "$VERSION/comparison-results" ]; then cp "$VERSION"/comparison-results/* "evidence/$VERSION/"; fi
-            xcrun simctl io "$DEVICE" screenshot "evidence/$VERSION/final.png" || true
-            xcrun simctl spawn "$DEVICE" log show --last 8m --style json --predicate 'process == "Runner" OR process CONTAINS "WebKit"' > "$VERSION-native.json" 2>/dev/null
-            echo "NATIVE_LOG_EXIT=$?" > "evidence/$VERSION/native-log-status.txt"
-            python3 harness/tool/summarize_webkit_logs.py "$VERSION-native.json" > "evidence/$VERSION/native-summary.json"
+            python3 harness/comparison/run_console.py "$DEVICE" "$VERSION" "$LABEL" "$MODE"
+            python3 harness/comparison/collect.py "$LABEL-persisted.log" > "evidence/$LABEL/breadcrumbs.json"
+            xcrun simctl spawn "$DEVICE" log show --last 8m --style json --predicate 'process == "Runner" OR process CONTAINS "WebKit"' > "$LABEL-native.json" 2>/dev/null
+            python3 harness/tool/summarize_webkit_logs.py "$LABEL-native.json" > "evidence/$LABEL/native-summary.json"
           done
-          python3 - <<'PYTHON'
-          import json
-          from pathlib import Path
-          out={}
-          for version in ['v114','v115']:
-            p=Path('evidence')/version/'breadcrumbs.json'
-            d=json.loads(p.read_text())
-            out[version]={'samplesCollected':d['samplesCollected'],'driverLogPresent':d['driverLogPresent'],'observationComplete':d['samplesCollected']==12}
-          Path('evidence/comparison.json').write_text(json.dumps(out,indent=2))
-          assert all(x['observationComplete'] for x in out.values()), 'Incomplete evidence; not a comparative pass'
-          PYTHON
+          python3 harness/comparison/check_improvement.py
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: iOS-114-115-comparison-no-release
+          name: Content-readiness-preflight-no-IPA
           retention-days: 3
           path: evidence/
