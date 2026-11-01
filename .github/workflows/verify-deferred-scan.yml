@@ -13,6 +13,8 @@ jobs:
     timeout-minutes: 18
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - name: Verify exact intended change
         run: |
           set -euo pipefail
