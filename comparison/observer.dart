@@ -1,11 +1,25 @@
 import 'dart:convert';
+import 'dart:io';
 import 'package:flutter/foundation.dart';
 
 class CompareObserver {
+  static Directory? directory;
+  static void prepare(Directory value) {
+    directory = value;
+    for (final name in ['ph-comparison-probes.log','ph-comparison-events.log']) {
+      File('${value.path}/$name').writeAsStringSync('',flush:true);
+    }
+  }
+  static void probe(Map<String,dynamic> record) {
+    File('${directory!.path}/ph-comparison-probes.log').writeAsStringSync(
+      'PHCMP:'+jsonEncode(record)+'\n',mode:FileMode.append,flush:true);
+  }
   static final clock = Stopwatch()..start();
   static final events = <Map<String, Object>>[];
   static void event(String category) {
     events.add({'ms':clock.elapsedMilliseconds,'event':category});
+    if (directory != null) File('${directory!.path}/ph-comparison-events.log').writeAsStringSync(
+      'PHCMP:'+jsonEncode({'callbacks':[events.last]})+'\n',mode:FileMode.append,flush:true);
     debugPrint('PHCMP:'+jsonEncode({'callbacks':[events.last]}));
   }
   static const script = r'''

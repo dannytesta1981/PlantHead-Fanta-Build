@@ -3,14 +3,17 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:planthead_fanta/data/fanta_store.dart';
 import 'package:planthead_fanta/ui/native_home.dart';
 import 'package:planthead_fanta/comparison_observer.dart';
 void main(){
  final binding=IntegrationTestWidgetsFlutterBinding.ensureInitialized();
+ setUpAll(() async { CompareObserver.prepare(await getApplicationDocumentsDirectory()); });
  testWidgets('observe home for 60 seconds without login interaction',(tester)async{
   final store=FantaStore();final result=<String,dynamic>{'samples':<Object>[]};binding.reportData=result;
   debugPrint('PHCMP:'+jsonEncode({'phase':'started'}));
+  CompareObserver.probe({'phase':'started'});
   try{
    await tester.pumpWidget(MaterialApp(home:NativeHome(store:store)));
    await tester.pump(const Duration(seconds:1));
@@ -32,12 +35,14 @@ void main(){
     }catch(_){sample['probe']='failed_or_timeout';}
     (result['samples'] as List).add(sample);
     debugPrint('PHCMP:'+jsonEncode({'sample':sample,'callbacks':CompareObserver.events.toList()}));
+    CompareObserver.probe({'sample':sample,'callbacks':CompareObserver.events.toList()});
    }
    result['callbacks']=CompareObserver.events;
    await binding.takeScreenshot('home-comparison');
   }finally{
    result['callbacks']=CompareObserver.events;
    debugPrint('PHCMP:'+jsonEncode({'phase':'finished','callbacks':CompareObserver.events.toList()}));
+   CompareObserver.probe({'phase':'finished','callbacks':CompareObserver.events.toList()});
    await tester.pumpWidget(const SizedBox.shrink());store.dispose();
   }
  });
