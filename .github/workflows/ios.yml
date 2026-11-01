@@ -1,4 +1,4 @@
-name: iOS 1.1.6 build 9 - unsigned after verified preflight
+name: iOS 1.1.7 build 10 - unsigned after verified preflight
 on:
   workflow_dispatch:
     inputs:
@@ -19,6 +19,8 @@ jobs:
     timeout-minutes: 35
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
       - name: Require successful runtime preflight on exact source commit
         env:
           GH_TOKEN: ${{ github.token }}
@@ -28,11 +30,18 @@ jobs:
           [[ "$PREFLIGHT_ID" =~ ^[0-9]+$ ]]
           gh api "repos/$GITHUB_REPOSITORY/actions/runs/$PREFLIGHT_ID" > /tmp/preflight.json
           python3 - <<'PY'
-          import json,os
+          import json,os,subprocess
           from pathlib import Path
           r=json.loads(Path('/tmp/preflight.json').read_text())
           assert r['conclusion']=='success'
-          assert r['head_sha']==os.environ['GITHUB_SHA']
+          assert r['head_sha']=='68102e5c784f6aa2096aa6e4088581989577bb4e'
+          assert subprocess.check_output(['git','rev-parse','HEAD^'],text=True).strip()==r['head_sha']
+          changed=set(subprocess.check_output(['git','diff','--name-only',r['head_sha'],'HEAD'],text=True).splitlines())
+          assert changed=={'.github/workflows/ios.yml','tool/verify_ipa.py','pubspec.yaml','lib/data/diagnostics.dart'}
+          for p in ['pubspec.yaml','lib/data/diagnostics.dart']:
+              old=subprocess.check_output(['git','show',r['head_sha']+':'+p],text=True)
+              assert Path(p).read_text().strip()==old.replace('1.1.6+9','1.1.7+10').strip()
+          subprocess.check_call(['git','diff','--exit-code',r['head_sha'],'HEAD','--','assets','lib/ui','lib/core','ios','pubspec.lock'])
           assert r['path']=='.github/workflows/compare-ios.yml'
           PY
       - uses: subosito/flutter-action@v2
@@ -45,7 +54,7 @@ jobs:
           sudo xcode-select -s /Applications/Xcode_16.4.app/Contents/Developer
           flutter config --no-analytics
           flutter pub get --enforce-lockfile
-          flutter build ios --release --no-codesign --no-pub --build-name=1.1.6 --build-number=9
+          flutter build ios --release --no-codesign --no-pub --build-name=1.1.7 --build-number=10
       - name: Package and verify IPA for Feather
         env:
           PREFLIGHT_ID: ${{ inputs.preflight_run_id }}
@@ -55,22 +64,23 @@ jobs:
           xcrun lipo build/ios/iphoneos/Runner.app/Runner -verify_arch arm64
           mkdir -p build/feather/Payload
           cp -R build/ios/iphoneos/Runner.app build/feather/Payload/
-          (cd build/feather && /usr/bin/ditto -c -k --keepParent Payload PlantHead_Fanta-1.1.6-build9-unsigned.ipa)
-          python3 tool/verify_ipa.py build/feather/PlantHead_Fanta-1.1.6-build9-unsigned.ipa > build/feather/VERIFICATION.json
+          (cd build/feather && /usr/bin/ditto -c -k --keepParent Payload PlantHead_Fanta-1.1.7-build10-unsigned.ipa)
+          python3 tool/verify_ipa.py build/feather/PlantHead_Fanta-1.1.7-build10-unsigned.ipa > build/feather/VERIFICATION.json
           shasum -a 256 build/feather/*.ipa > build/feather/SHA256.txt
           python3 - <<'PY'
           import json,os,hashlib
           from pathlib import Path
           paths=['lib/ui/fanta_home.dart','lib/core/web_load_monitor.dart','assets/content_readiness.js','assets/official_access.js']
-          data={'commit':os.environ['GITHUB_SHA'],'preflightRun':os.environ['PREFLIGHT_ID'],'version':'1.1.6','build':9,'sourceHashes':{p:hashlib.sha256(Path(p).read_bytes()).hexdigest() for p in paths}}
+          data={'commit':os.environ['GITHUB_SHA'],'preflightRun':os.environ['PREFLIGHT_ID'],'preflightCommit':'68102e5c784f6aa2096aa6e4088581989577bb4e','version':'1.1.7','build':10,'sourceHashes':{p:hashlib.sha256(Path(p).read_bytes()).hexdigest() for p in paths}}
           Path('build/feather/SOURCE.json').write_text(json.dumps(data,indent=2))
           PY
       - uses: actions/upload-artifact@v4
         with:
-          name: PlantHead-Fanta-1.1.6-build9-unsigned-Feather
+          name: PlantHead-Fanta-1.1.7-build10-unsigned-Feather
           retention-days: 3
           path: |
             build/feather/*.ipa
             build/feather/SHA256.txt
             build/feather/VERIFICATION.json
             build/feather/SOURCE.json
+

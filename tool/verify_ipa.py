@@ -16,8 +16,8 @@ with zipfile.ZipFile(ipa) as z:
     plist=plistlib.loads(z.read(plists[0]))
     app=plists[0].removesuffix('Info.plist')
     assert plist['CFBundleIdentifier']=='it.planthead.fanta'
-    assert plist['CFBundleShortVersionString']=='1.1.6'
-    assert plist['CFBundleVersion']=='9'
+    assert plist['CFBundleShortVersionString']=='1.1.7'
+    assert plist['CFBundleVersion']=='10'
     assert plist['CFBundlePackageType']=='APPL'
     assert 'iPhoneOS' in plist['CFBundleSupportedPlatforms']
     binaries=[app+plist['CFBundleExecutable'],app+'Frameworks/App.framework/App',app+'Frameworks/Flutter.framework/Flutter']
@@ -47,3 +47,4 @@ with zipfile.ZipFile(ipa) as z:
         'minimum_os':plist['MinimumOSVersion'],'sdk':plist.get('DTSDKName'),
         'platform':plist['CFBundleSupportedPlatforms'],'binaries':checks,
         'navigation_asset_matches_source':True,'data_bridge_asset_matches_source':True},indent=2))
+

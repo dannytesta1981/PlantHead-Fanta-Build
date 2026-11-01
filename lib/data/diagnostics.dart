@@ -171,7 +171,7 @@ class Diagnostics extends ChangeNotifier {
   String export({required String session, required Map<String, int> counts}) =>
       const JsonEncoder.withIndent('  ').convert({
         'app': 'PlantHead Fanta',
-        'version': '1.1.6+9',
+        'version': '1.1.7+10',
         'adapter': 'ph-dom/1',
         'platform': Platform.operatingSystem,
         'session':
@@ -193,3 +193,4 @@ class Diagnostics extends ChangeNotifier {
         'events': _entries,
       });
 }
+
