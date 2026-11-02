@@ -1,6 +1,9 @@
 import 'dart:async';
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:file_picker/file_picker.dart';
+import 'package:flutter/services.dart';
+import '../data/league_import.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 import '../core/navigation_policy.dart';
@@ -32,6 +35,7 @@ class _NativeHomeState extends State<NativeHome> {
   void initState() {
     super.initState();
     store = widget.store ?? FantaStore();
+    if (widget.store == null) unawaited(store.restoreOfflineImport());
     webPage =
         widget.webBuilder?.call(store, returnNative) ??
         OfficialWebPage(key: webKey, store: store, onReturn: returnNative);
@@ -69,7 +73,53 @@ class _NativeHomeState extends State<NativeHome> {
     }
   }
 
+  Future<void> importExport() async {
+    try {
+      final result = await FilePicker.platform.pickFiles(
+        type: FileType.custom, allowedExtensions: ['csv', 'xlsx'],
+        withData: true,
+      );
+      if (result == null || !mounted) return;
+      final file = result.files.single;
+      if (file.size > 4 * 1024 * 1024) throw const FormatException('File superiore a 4 MB');
+      final bytes = file.bytes;
+      if (bytes == null) throw const FormatException('Impossibile leggere il file selezionato');
+      final parsed = LeagueFileImporter.parse(file.name, bytes);
+      if (!mounted) return;
+      final confirmed = await showDialog<bool>(context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('Importare i dati della lega?'),
+          content: Text('File: ${file.name}\n'
+            'Squadre in classifica: ${parsed.ranking.length}\n'
+            'Partite: ${parsed.matches.length}\n'
+            'Giocatori: ${parsed.playerCount}\n\n'
+            'I dati saranno conservati solo su questo dispositivo. '
+            'Non vengono inviati a servizi esterni.'),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Annulla')),
+            FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('Importa')),
+          ],
+        ));
+      if (confirmed != true || !mounted) return;
+      store.applyImported(parsed);
+      await store.saveOfflineImport(parsed);
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Dati importati da ${file.name}. Non sono sincronizzati automaticamente.')));
+    } on PlatformException catch (_) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Impossibile aprire il selettore file.')));
+    } catch (e) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Importazione non riuscita: $e')));
+    }
+  }
+
   Future<void> refresh() async {
+    if (store.offlineImport) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('Dati offline: importa un nuovo file per aggiornarli.')));
+      return;
+    }
     if (selected == 0) {
       await store.capture();
       return;
@@ -131,6 +181,11 @@ class _NativeHomeState extends State<NativeHome> {
               ),
               actions: [
                 IconButton(
+                  tooltip: 'Importa esportazione CSV o XLSX',
+                  onPressed: importExport,
+                  icon: const Icon(Icons.file_upload_outlined),
+                ),
+                IconButton(
                   tooltip: 'Lega e accesso',
                   onPressed: () => openWeb(),
                   icon: const Icon(Icons.swap_horiz_rounded),
@@ -167,7 +222,9 @@ class _NativeHomeState extends State<NativeHome> {
                         const SizedBox(width: 8),
                         Expanded(
                           child: Text(
-                            store.updatedAt == null
+                            store.offlineImport
+                                ? 'Dati importati: ${store.importedSource} · aggiornamento manuale'
+                                : store.updatedAt == null
                                 ? 'Collega la tua lega per leggere i dati'
                                 : 'Ultima lettura ${_time(store.updatedAt!)} · dati della pagina',
                             style: const TextStyle(
@@ -177,9 +234,9 @@ class _NativeHomeState extends State<NativeHome> {
                           ),
                         ),
                         TextButton(
-                          onPressed: () => openWeb(),
+                          onPressed: store.offlineImport ? importExport : () => openWeb(),
                           child: Text(
-                            store.session == 'league_page' ? 'Lega' : 'Accedi',
+                            store.offlineImport ? 'Importa' : store.session == 'league_page' ? 'Lega' : 'Accedi',
                           ),
                         ),
                       ],
@@ -465,7 +522,9 @@ class _NativeHomeState extends State<NativeHome> {
   }
 
   void _roster(TeamData team) {
-    final known = store.rosterTeam == team.name && store.players.isNotEmpty;
+    final imported = store.importedRosters[team.name];
+    final known = imported != null && imported.isNotEmpty ||
+        store.rosterTeam == team.name && store.players.isNotEmpty;
     showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
@@ -485,7 +544,9 @@ class _NativeHomeState extends State<NativeHome> {
                 },
               ),
               const SectionTitle('Rosa'),
-              if (known)
+              if (imported != null && imported.isNotEmpty)
+                for (final player in imported) PlayerTile(player: player)
+              else if (known)
                 for (final player in store.players) PlayerTile(player: player),
               if (!known)
                 EmptySection(
@@ -541,6 +602,18 @@ class _NativeHomeState extends State<NativeHome> {
               ],
             ),
           ),
+          ListTile(
+            leading: const Icon(Icons.file_upload_outlined),
+            title: const Text('Importa dati CSV / Excel'),
+            subtitle: const Text('Visualizza offline i dati esportati dal sito'),
+            onTap: () { Navigator.pop(context); unawaited(importExport()); },
+          ),
+          if (store.offlineImport)
+            ListTile(
+              leading: const Icon(Icons.delete_outline),
+              title: const Text('Elimina dati importati'),
+              onTap: () { Navigator.pop(context); unawaited(store.clearOfflineImport()); },
+            ),
           ListTile(
             leading: const Icon(Icons.swap_horiz_rounded),
             title: const Text('Lega, competizione e accesso'),
