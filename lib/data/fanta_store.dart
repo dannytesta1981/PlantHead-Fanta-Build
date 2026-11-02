@@ -8,12 +8,17 @@ import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import '../core/navigation_policy.dart';
 import 'diagnostics.dart';
 import 'models.dart';
+import 'league_import.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 class FantaStore extends ChangeNotifier {
   final diagnostics = Diagnostics();
   InAppWebViewController? controller;
   VoidCallback? onWebCommand;
   String session = 'unknown', contextLabel = '', scope = '';
+  LeagueImportData? imported;
+  final Map<String, List<PlayerData>> importedRosters = {};
+  static const _importKey = 'league_import_v1';
   String? chosenTeam, shirt, rosterTeam;
   List<TeamData> ranking = [], teams = [];
   List<MatchData> matches = [];
@@ -90,6 +95,9 @@ class FantaStore extends ChangeNotifier {
     for (final t in ranking) {
       map[t.name] = t;
     }
+    for (final name in importedRosters.keys) {
+      map.putIfAbsent(name, () => TeamData(name: name));
+    }
     return map.values.toList();
   }
 
@@ -131,7 +139,77 @@ class FantaStore extends ChangeNotifier {
   void selectTeam(String name) {
     if (allTeams.any((t) => t.name == name)) {
       chosenTeam = name;
+      if (importedRosters.containsKey(name)) {
+        players = importedRosters[name]!;
+        rosterTeam = name;
+      }
       notifyListeners();
+    }
+  }
+
+  /// Use only user-provided files. No site API requests or session transfer.
+  void applyImport(LeagueImportData next) {
+    final previous = imported;
+    final rankingByName = <String, TeamData>{
+      if (previous != null) for (final t in previous.ranking) t.name: t,
+      for (final t in next.ranking) t.name: t,
+    };
+    final matchesByKey = <String, MatchData>{
+      if (previous != null)
+        for (final m in previous.matches)
+          '${m.round}:${m.home}:${m.away}': m,
+      for (final m in next.matches)
+        '${m.round}:${m.home}:${m.away}': m,
+    };
+    final rosters = <String, List<PlayerData>>{
+      if (previous != null) ...previous.rosters,
+      ...next.rosters,
+    };
+    imported = LeagueImportData(
+      next.source, rankingByName.values.toList(), matchesByKey.values.toList(), rosters,
+    );
+    importedRosters..clear()..addAll(rosters);
+    ranking = imported!.ranking;
+    matches = imported!.matches;
+    teams = [
+      for (final team in rosters.keys)
+        TeamData(name: team),
+    ];
+    session = 'local_import';
+    contextLabel = 'Dati importati · ' + next.source;
+    scope = 'local_import';
+    if (chosenTeam != null && rosters.containsKey(chosenTeam)) {
+      players = rosters[chosenTeam]!;
+      rosterTeam = chosenTeam;
+    } else if (rosters.isNotEmpty) {
+      chosenTeam = rosters.keys.first;
+      players = rosters[chosenTeam]!;
+      rosterTeam = chosenTeam;
+    }
+    updatedAt = DateTime.now();
+    issue = null;
+    loading = false;
+    notifyListeners();
+  }
+
+  Future<void> saveImport() async {
+    if (imported == null) return;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_importKey, jsonEncode(imported!.toJson()));
+  }
+
+  Future<void> restoreImport() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final raw = prefs.getString(_importKey);
+      if (raw == null || raw.length > 1024 * 1024) return;
+      final json = jsonDecode(raw);
+      if (json is Map<String, dynamic>) {
+        final data = LeagueImportData.fromJson(json);
+        if (data.hasData) applyImport(data);
+      }
+    } catch (_) {
+      // A malformed cached export must not break the native UI.
     }
   }
 
