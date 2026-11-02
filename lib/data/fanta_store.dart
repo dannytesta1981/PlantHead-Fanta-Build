@@ -36,7 +36,7 @@ class FantaStore extends ChangeNotifier {
   void applyImported(LeagueImportData data) {
     if (!data.hasData) throw const FormatException('Nessun dato importabile');
     // Do not mix extracted WebView data with a selected offline export.
-    if (!offlineImport) {
+    {
       ranking = [];
       matches = [];
       teams = [];
