@@ -1,5 +1,8 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:typed_data';
+import 'package:file_picker/file_picker.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/services.dart';
@@ -9,6 +12,7 @@ import 'package:share_plus/share_plus.dart';
 import '../core/navigation_policy.dart';
 import '../data/fanta_store.dart';
 import '../data/models.dart';
+import '../data/league_import.dart';
 import 'fanta_home.dart';
 import 'native_parts.dart';
 
@@ -35,6 +39,7 @@ class _NativeHomeState extends State<NativeHome> {
   void initState() {
     super.initState();
     store = widget.store ?? FantaStore();
+    if (widget.store == null) unawaited(store.restoreImport());
     if (widget.store == null) unawaited(store.restoreOfflineImport());
     webPage =
         widget.webBuilder?.call(store, returnNative) ??
@@ -114,6 +119,50 @@ class _NativeHomeState extends State<NativeHome> {
     }
   }
 
+  Future<void> importOfficialFile() async {
+    try {
+      final chosen = await FilePicker.platform.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: ['csv', 'xlsx'],
+        withData: true,
+        allowMultiple: false,
+      );
+      if (chosen == null || chosen.files.isEmpty) return;
+      final file = chosen.files.single;
+      Uint8List? bytes = file.bytes;
+      if (bytes == null && file.path != null) {
+        bytes = await File(file.path!).readAsBytes();
+      }
+      if (bytes == null) {
+        throw const FormatException('Impossibile leggere il file selezionato');
+      }
+      final imported = LeagueFileImporter.parse(file.name, bytes);
+      store.applyImport(imported);
+      await store.saveImport();
+      if (!mounted) return;
+      setState(() { selected = 0; webVisible = false; });
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text('Importati: ${imported.ranking.length} squadre in classifica, '
+            '${imported.matches.length} partite, ${imported.playerCount} calciatori.'),
+      ));
+    } on PlatformException catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('File non accessibile dal dispositivo.')),
+      );
+    } on FormatException catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(e.message)),
+      );
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Importazione non riuscita. Verifica il file Excel o CSV.')),
+      );
+    }
+  }
+
   Future<void> refresh() async {
     if (store.offlineImport) {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
@@ -186,6 +235,11 @@ class _NativeHomeState extends State<NativeHome> {
                   icon: const Icon(Icons.file_upload_outlined),
                 ),
                 IconButton(
+                  tooltip: 'Importa dati della lega da Excel o CSV',
+                  onPressed: importOfficialFile,
+                  icon: const Icon(Icons.upload_file_rounded),
+                ),
+                IconButton(
                   tooltip: 'Lega e accesso',
                   onPressed: () => openWeb(),
                   icon: const Icon(Icons.swap_horiz_rounded),
@@ -213,7 +267,7 @@ class _NativeHomeState extends State<NativeHome> {
                     child: Row(
                       children: [
                         Icon(
-                          store.session == 'league_page'
+                          store.session == 'league_page' || store.session == 'local_import'
                               ? Icons.verified_user_outlined
                               : Icons.link_rounded,
                           size: 16,
@@ -225,7 +279,7 @@ class _NativeHomeState extends State<NativeHome> {
                             store.offlineImport
                                 ? 'Dati importati: ${store.importedSource} · aggiornamento manuale'
                                 : store.updatedAt == null
-                                ? 'Collega la tua lega per leggere i dati'
+                                ? 'Importa Excel/CSV dalla lega, oppure apri il sito'
                                 : 'Ultima lettura ${_time(store.updatedAt!)} · dati della pagina',
                             style: const TextStyle(
                               fontSize: 11,
@@ -614,6 +668,11 @@ class _NativeHomeState extends State<NativeHome> {
               title: const Text('Elimina dati importati'),
               onTap: () { Navigator.pop(context); unawaited(store.clearOfflineImport()); },
             ),
+          ListTile(
+            leading: const Icon(Icons.upload_file_rounded),
+            title: const Text('Importa classifica, calendario o rose (CSV/XLSX)'),
+            onTap: () { Navigator.pop(context); unawaited(importOfficialFile()); },
+          ),
           ListTile(
             leading: const Icon(Icons.swap_horiz_rounded),
             title: const Text('Lega, competizione e accesso'),
