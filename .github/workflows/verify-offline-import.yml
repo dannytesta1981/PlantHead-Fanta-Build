@@ -1,0 +1,25 @@
+name: Verify local league export import
+on:
+  push:
+    branches:
+      - feature/official-export-offline-import
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.35.7'
+          cache: false
+      - name: Resolve new dependencies and analyze Dart
+        run: |
+          flutter pub get
+          flutter analyze --no-pub lib test integration_test
+          flutter test --no-pub test
+      - name: Verify lockfile update is required only for added packages
+        run: |
+          grep -A4 -E '^  (excel|file_picker):' pubspec.lock
