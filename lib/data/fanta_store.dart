@@ -2,6 +2,8 @@ import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'league_import.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import '../core/navigation_policy.dart';
 import 'diagnostics.dart';
@@ -24,10 +26,65 @@ class FantaStore extends ChangeNotifier {
   String? _script;
   String _lastPayload = '';
   Timer? _timeout;
+  final Map<String, List<PlayerData>> importedRosters = {};
+  bool offlineImport = false;
+  String importedSource = '';
 
   FantaStore() {
     diagnostics.record('startup');
   }
+  void applyImported(LeagueImportData data) {
+    if (!data.hasData) throw const FormatException('Nessun dato importabile');
+    // Do not mix extracted WebView data with a selected offline export.
+    if (!offlineImport) {
+      ranking = [];
+      matches = [];
+      teams = [];
+      players = [];
+      importedRosters.clear();
+      chosenTeam = null;
+      scope = 'offline-import';
+    }
+    offlineImport = true;
+    importedSource = data.source;
+    if (data.ranking.isNotEmpty) ranking = data.ranking;
+    if (data.matches.isNotEmpty) matches = data.matches;
+    if (data.rosters.isNotEmpty) {
+      importedRosters.addAll(data.rosters);
+      teams = importedRosters.keys.map((name) => TeamData(name: name)).toList();
+    }
+    session = 'offline_import';
+    issue = null;
+    updatedAt = DateTime.now();
+    notifyListeners();
+  }
+
+  Future<void> restoreOfflineImport() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final raw = prefs.getString('ph_offline_import_v1');
+      if (raw == null) return;
+      final parsed = jsonDecode(raw);
+      if (parsed is Map<String, dynamic>) applyImported(LeagueImportData.fromJson(parsed));
+    } catch (_) {
+      // Corrupt local snapshot is never treated as an authenticated session.
+    }
+  }
+
+  Future<void> saveOfflineImport(LeagueImportData data) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('ph_offline_import_v1', jsonEncode(data.toJson()));
+  }
+
+  Future<void> clearOfflineImport() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove('ph_offline_import_v1');
+    offlineImport = false;
+    importedRosters.clear();
+    importedSource = '';
+    clear();
+  }
+
   List<TeamData> get allTeams {
     final map = {for (final t in teams) t.name: t};
     for (final t in ranking) {
@@ -119,11 +176,15 @@ class FantaStore extends ChangeNotifier {
     updatedAt = null;
     _lastPayload = '';
     available = {};
+    offlineImport = false;
+    importedRosters.clear();
+    importedSource = '';
     if (recordEvent) diagnostics.record('session_cleared');
     notifyListeners();
   }
 
   void accept(PageSnapshot page) {
+    if (offlineImport) return; // Don't overwrite user-imported data with WebView inspection.
     if (page.session == 'login_form') {
       clear(recordEvent: false);
       diagnostics.record('login_form_observed');
@@ -163,7 +224,7 @@ class FantaStore extends ChangeNotifier {
 
   Future<void> capture() async {
     final c = controller;
-    if (c == null || extracting || loading) return;
+    if (offlineImport || c == null || extracting || loading) return;
     extracting = true;
     try {
       if (!trustedPage((await c.getUrl())?.toString())) {
